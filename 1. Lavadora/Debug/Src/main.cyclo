@@ -1,1 +1,6 @@
-../Src/main.c:4:5:main	1
+../Src/main.c:61:6:tecla_activa	5
+../Src/main.c:94:6:btn_start	13
+../Src/main.c:114:6:btn_cancelar	3
+../Src/main.c:136:6:leer_tapa	2
+../Src/main.c:146:6:initwasher	2
+../Src/main.c:233:5:main	1

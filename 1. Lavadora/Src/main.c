@@ -12,9 +12,9 @@
 //        Segmentos a–g, dp = PC0–PC7
 //        Enable dígitos D1–D4 = PB10–PB13
 
-// Keypad 4x4 (selección de ciclos y funciones):
-//        Filas = PB0–PB3  → salidas
-//        Columnas = PB4–PB7 → entradas con pull-up interno
+// Keypad reducido (1 fila, 3 columnas):
+//        Fila = PB0  → entrada con pull-up interno
+//        Columnas = PB4–PB6 → salidas controladas por ODR
 
 // Motor del tambor (DC controlado por driver H-bridge):
 //        IN1–IN2 = PC8–PC9
@@ -32,14 +32,122 @@
 
 // Botones de control:
 //        Iniciar  = PC13 (EXTI13)
-//        Cancelar = PC14 (EXTI14)
+//        Cancelar = PB1 (EXTI14)
 
 // Switch de tapa de seguridad:
-//        Tapa = PC15 (EXTI15) → bloquea arranque si está abierta
+//        Tapa = PB2 (EXTI15) → bloquea arranque si está abierta
 
 // USART2 (módulo LTE/GSM o monitoreo serial):
 //        TX = PA2
 //        RX = PA3
+
+//Variables
+
+//Variables Keypad
+volatile uint8_t ciclo = 0;
+volatile uint8_t ciclo_activo = 0;
+volatile uint8_t fsm_keypad = 0;
+
+//Variables de botones
+volatile uint8_t flag_inicio = 0;
+volatile uint8_t flag_tapadera = 0;
+volatile uint8_t flag_cancelar = 0;
+volatile uint8_t flag_tapa_abierta = 0;
+volatile uint8_t fsm_lavadora = 0;
+
+//<-------Keypad reducido------->
+// 1 fila (PB0) y 3 columnas (PB4–PB6)
+
+void tecla_activa(void)
+{
+    // Si ya hay un ciclo activo, no permitir seleccionar otro
+    if (ciclo_activo == 1) {
+        return;
+    }
+
+    // Escaneo simple de 3 columnas y 1 fila
+    GPIOB->ODR |= (1<<4)|(1<<5)|(1<<6); // Todas las columnas HIGH
+
+    GPIOB->ODR &= ~(1<<4);               // Activa columna 1
+    if ( (GPIOB->IDR & (1<<0)) == 0 ) {  // Si fila PB0 lee bajo
+        ciclo = 1;                       // Tecla '1'
+    }
+    GPIOB->ODR |= (1<<4);
+
+    GPIOB->ODR &= ~(1<<5);               // Activa columna 2
+    if ( (GPIOB->IDR & (1<<0)) == 0 ) {
+        ciclo = 2;                       // Tecla '2'
+    }
+    GPIOB->ODR |= (1<<5);
+
+    GPIOB->ODR &= ~(1<<6);               // Activa columna 3
+    if ( (GPIOB->IDR & (1<<0)) == 0 ) {
+        ciclo = 3;                       // Tecla '3'
+    }
+    GPIOB->ODR |= (1<<6);
+}
+
+
+// <-------Funciones de control de botones------->
+
+// Botón INICIAR
+void btn_start(void)
+{
+	if ((ciclo != 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 0)) {
+	    // Arrancar ciclo
+	    flag_inicio = 1;
+	}
+	else if((ciclo == 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 0)){
+		// lcd_print("Seleccione ciclo");
+		flag_inicio = 0;
+	}
+	else if((ciclo != 0) && (ciclo_activo == 1) && (flag_tapa_abierta == 0)){
+		// lcd_print("Ciclo en proceso");
+	}
+	else if((ciclo != 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 1)){
+		// lcd_print("Cerrar tapa");
+		flag_inicio = 0;
+	}
+}
+
+// Botón CANCELAR
+void btn_cancelar(void)
+{
+    // Solo cancelar si hay un ciclo activo o seleccionado
+    if ((ciclo != 0) || (ciclo_activo == 1)) {
+
+        ciclo = 0;
+        ciclo_activo = 0;
+        flag_inicio = 0;
+        fsm_lavadora = 0;   // estado IDLE
+
+        // Apagar LEDs de etapa
+        GPIOC->ODR &= ~((1<<10)|(1<<11)|(1<<12));
+
+        // Detener motor (más adelante agregás la función)
+        // motor_stop();
+
+        // lcd_print("Ciclo cancelado");
+        // USART2_Putstring((uint8_t*)"Ciclo cancelado\r\n");
+    }
+}
+
+// Switch de tapa (seguridad)
+void leer_tapa(void)
+{
+    if ((GPIOB->IDR & (1<<2)) == 0) {
+        flag_tapa_abierta = 1;   // tapa abierta (lee LOW)
+    } else {
+        flag_tapa_abierta = 0;   // tapa cerrada
+    }
+}
+
+void tipo_ciclo(){
+	if((flag_inicio = 1) && (flag_tapadera_abierta == 0)){
+
+	}
+}
+
 
 void initwasher(void)
 {
@@ -72,14 +180,16 @@ void initwasher(void)
 
     //GPIOB
 
-    // Keypad filas (PB0–PB3) → salidas
-    GPIOB->MODER &= ~((3<<(0*2))|(3<<(1*2))|(3<<(2*2))|(3<<(3*2)));
-    GPIOB->MODER |=  ((1<<(0*2))|(1<<(1*2))|(1<<(2*2))|(1<<(3*2)));
+    // Keypad fila (PB0) → entrada con pull-up interno
+    GPIOB->MODER &= ~(3<<(0*2));
+    GPIOB->PUPDR &= ~(3<<(0*2));
+    GPIOB->PUPDR |=  (1<<(0*2));
 
-    // Keypad columnas (PB4–PB7) → entradas con pull-up
-    GPIOB->MODER &= ~((3<<(4*2))|(3<<(5*2))|(3<<(6*2))|(3<<(7*2)));
-    GPIOB->PUPDR &= ~((3<<(4*2))|(3<<(5*2))|(3<<(6*2))|(3<<(7*2)));
-    GPIOB->PUPDR |=  ((1<<(4*2))|(1<<(5*2))|(1<<(6*2))|(1<<(7*2)));
+    // Keypad columnas (PB4–PB6) → salidas controladas por ODR
+    GPIOB->MODER &= ~((3<<(4*2))|(3<<(5*2))|(3<<(6*2)));
+    GPIOB->MODER |=  ((1<<(4*2))|(1<<(5*2))|(1<<(6*2)));
+    GPIOB->ODR   |=  ((1<<4)|(1<<5)|(1<<6)); // arranque HIGH
+
 
     // Motor IN3–IN4 (PB8–PB9) → salidas
     GPIOB->MODER &= ~((3<<(8*2))|(3<<(9*2)));
@@ -110,23 +220,26 @@ void initwasher(void)
     GPIOC->MODER &= ~((3<<(10*2))|(3<<(11*2))|(3<<(12*2)));
     GPIOC->MODER |=  ((1<<(10*2))|(1<<(11*2))|(1<<(12*2)));
 
-    // Botones y tapa (PC13–PC15) → entradas con pull-up
-    GPIOC->MODER &= ~((3<<(13*2))|(3<<(14*2))|(3<<(15*2)));
-    GPIOC->PUPDR &= ~((3<<(13*2))|(3<<(14*2))|(3<<(15*2)));
-    GPIOC->PUPDR |=  ((1<<(13*2))|(1<<(14*2))|(1<<(15*2)));
+    // Botones y tapa (PC13,PB1,PB2) → entradas
+    GPIOC->MODER &= ~(3<<(13*2));
+    GPIOB->MODER &= ~(3<<(1*2));
+    GPIOB->MODER &= ~(3<<(2*2));
+    GPIOB->PUPDR &= ~(3<<(2*2));
+    GPIOB->PUPDR |=  (1<<(2*2));   // pull-up interno
 
     GPIOA->ODR = 0x0000;
     GPIOB->ODR = 0x0000;
     GPIOC->ODR = 0x0000;
 
     // 4) EXIT (Flanco bajada)
-    // Keypad (filas) y Botones (PC13, PC15
-
-
+    // Keypad (filas) y Botones (PC13, PB1, PB2)
 }
 
+
 int main (void){
+	initwasher();
 	while(1){
 
 	}
+
 }
