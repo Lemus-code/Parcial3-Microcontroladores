@@ -1,245 +1,202 @@
 #include <stdint.h>
 #include "stm32l053xx.h"
-
-// <-------Definición de pines------->
-
 // LCD 16x2 (modo 4 bits):
 //        D4–D7 = PA8–PA11
 //        E  = PA5
 //        RS = PA4
 
 // Display 7 segmentos (4 dígitos, multiplexado):
-//        Segmentos a–g, dp = PC0–PC7
-//        Enable dígitos D1–D4 = PB10–PB13
+//        Segmentos a–g = PB0–PB6
+//        Enable dígitos D1–D4 = PC5, PC6, PC8, PC9
+//        → D1 = decenas de minuto (izquierda)
+//        → D2 = unidades de minuto
+//        → D3 = decenas de segundo
+//        → D4 = unidades de segundo (derecha)
 
 // Keypad reducido (1 fila, 3 columnas):
-//        Fila = PB0  → entrada con pull-up interno
-//        Columnas = PB4–PB6 → salidas controladas por ODR
+//        Fila = PC4  → entrada con pull-up interno
+//        Columnas = PB7–PB9 → salidas controladas por ODR
+//        → C1 = 30 min, C2 = 40 min, C3 = 50 min
 
-// Motor del tambor (DC controlado por driver H-bridge):
-//        IN1–IN2 = PC8–PC9
-//        IN3–IN4 = PB8–PB9
-//        PWM velocidad = TIM3_CH1–CH2
-//        Inversión de rotación controlada por software
+// Motor del tambor (controlado por driver L298N):
+//        IN1 = PC2     → Dirección 1 (sentido horario)
+//        IN2 = PC3     → Dirección 2 (sentido antihorario)
+//        ENA (PWM velocidad) = PA0 (TIM2_CH1)
+//        → Control de velocidad mediante PWM (Timer 2 Canal 1)
+//        → Inversión de rotación controlada por software usando IN1/IN2
 
 // Buzzer (alertas de inicio, fin, error):
-//        PWM salida = PA0  (TIM2_CH1)
+//        PWM salida = PA6
 
 // LEDs indicadores de etapa del ciclo:
-//        Lavado     = PC10
-//        Enjuague   = PC11
-//        Centrifuga = PC12
+//        Lavado     = PA12
+//        Enjuague   = PA15
+//        Centrifuga = PB10
 
-// Botones de control:
-//        Iniciar  = PC13 (EXTI13)
-//        Cancelar = PB1 (EXTI14)
+// Botones de control (interrupciones EXTI):
+//        Iniciar  = PC1  (EXTI1)  → Botón START del ciclo
+//        Cancelar = PB11 (EXTI11) → Cancela ciclo actual
 
 // Switch de tapa de seguridad:
-//        Tapa = PB2 (EXTI15) → bloquea arranque si está abierta
+//        Tapa = PB12 (EXTI12) → Bloquea arranque si está abierta
 
-// USART2 (módulo LTE/GSM o monitoreo serial):
-//        TX = PA2
-//        RX = PA3
+// USART2 (para monitoreo serial o módulo LTE/GSM):
+//        TX = PA2  (USART2_TX)
+//        RX = PA3  (USART2_RX)
 
-//Variables
 
-//Variables Keypad
-volatile uint8_t ciclo = 0;
-volatile uint8_t ciclo_activo = 0;
-volatile uint8_t fsm_keypad = 0;
+void system_init(){
+	//1. HSI 16Mhz
+	RCC->CR |= (1<<0); //Encenderlo
+	RCC->CFGR |= (1<<0); //Como clk del sistema
 
-//Variables de botones
-volatile uint8_t flag_inicio = 0;
-volatile uint8_t flag_tapadera = 0;
-volatile uint8_t flag_cancelar = 0;
-volatile uint8_t flag_tapa_abierta = 0;
-volatile uint8_t fsm_lavadora = 0;
+	//2. Clock GPIO's A,B,C
+	RCC->IOPENR |= (1<<0) | (1<<1) | (1<<2);
 
-//<-------Keypad reducido------->
-// 1 fila (PB0) y 3 columnas (PB4–PB6)
+	//3. Configuración Puertos (Keypad, Displays, Lcd, Leds, Buzzer, Push, Switch, Motor)
 
-void tecla_activa(void)
+	//Leds salida (PA12, PA15, PB7)
+	GPIOA->MODER &= ~((3 << (12 * 2)) | (3<<(15 * 2)));
+	GPIOA->MODER |=  ((1 << (12 * 2)) | (1<<(15 * 2)));
+	GPIOB->MODER &= ~(3 << (10 * 2));
+	GPIOB->MODER |=  (1 << (10 * 2));
+
+	//buzzer salida
+	GPIOA->MODER &= ~(3 << (6 * 2));
+	GPIOA->MODER |=  (1 << (6 * 2));
+
+	// Push Buttons entrada y switch
+	GPIOC->MODER &= ~(3 << (1 * 2));
+	GPIOB->MODER &= ~((3 << (11 * 2)) | (3<<(12 * 2)));
+
+	// Activar pull-up internos en los botones
+	GPIOC->PUPDR &= ~(3u << (1 * 2));
+	GPIOC->PUPDR |=  (1u << (1 * 2));   // 01 = pull-up
+
+	GPIOB->PUPDR &= ~(3u << (11 * 2));
+	GPIOB->PUPDR |=  (1u << (1 * 2));
+
+	GPIOB->PUPDR &= ~(3u << (12 * 2));  // Limpia
+	GPIOB->PUPDR |=  (2u << (12 * 2));  // 10 = Pull-down
+
+	//Motor (salida) IN1 e IN2
+	GPIOC->MODER &= ~((3<<(2 * 2)) | (3<<(3 * 2)));
+	GPIOC->MODER |= ((1<<(2 * 2)) | (1<<(3 * 2)));
+
+	//Enabled motor
+	GPIOA->MODER &= ~(3 << (0*2));
+	GPIOA->MODER |=  (2 << (0*2));       // Modo alternativo
+	GPIOA->AFR[0] &= ~(0xF << (0*4));  // Limpia los 4 bits del AF de PA0
+	GPIOA->AFR[0] |=  (2 << (0*4));   // Asigna AF2 → TIM2_CH1
+
+
+	//4. Timers
+
+	//Tim2 para motor PA0
+	RCC->APB1ENR |= (1<<0); //Habilitar el timer
+	TIM2->PSC = 16 - 1;   // 1 MHz
+	TIM2->ARR = 50 - 1;   // 1 MHz / 50 = 20 kHz
+	TIM2->CCR1 = 21;			// 50% duty inicial
+	TIM2->CCMR1 &= ~(7u << 4);			//limpio el modo
+	TIM2->CCMR1 |=  (6u << 4);          // PWM Mode 1 que es 110 = 6
+	TIM2->CCER  |=  (1u << 0);            // Habilita salida CH1
+	TIM2->CNT = 0;	// donde inicia el conteo
+	TIM2->CR1 |= (1<<0);	// activar conteo
+
+
+
+	//5. Reinicio de todo
+	GPIOB->ODR &= ~((1 << 8) | (1 << 9)); //Apago motor
+}
+
+//Variables globales
+uint8_t timer_sentido = 0;
+uint8_t ticks_segundos = 0;
+int8_t sentido = -1;
+
+//Funciones del motor
+
+// ============================
+// FUNCIONES DEL MOTOR
+// ============================
+
+void lavado(void)
 {
-    // Si ya hay un ciclo activo, no permitir seleccionar otro
-    if (ciclo_activo == 1) {
-        return;
-    }
-
-    // Escaneo simple de 3 columnas y 1 fila
-    GPIOB->ODR |= (1<<4)|(1<<5)|(1<<6); // Todas las columnas HIGH
-
-    GPIOB->ODR &= ~(1<<4);               // Activa columna 1
-    if ( (GPIOB->IDR & (1<<0)) == 0 ) {  // Si fila PB0 lee bajo
-        ciclo = 1;                       // Tecla '1'
-    }
-    GPIOB->ODR |= (1<<4);
-
-    GPIOB->ODR &= ~(1<<5);               // Activa columna 2
-    if ( (GPIOB->IDR & (1<<0)) == 0 ) {
-        ciclo = 2;                       // Tecla '2'
-    }
-    GPIOB->ODR |= (1<<5);
-
-    GPIOB->ODR &= ~(1<<6);               // Activa columna 3
-    if ( (GPIOB->IDR & (1<<0)) == 0 ) {
-        ciclo = 3;                       // Tecla '3'
-    }
-    GPIOB->ODR |= (1<<6);
+    TIM2->CCR1 = 21;
+    GPIOC->ODR |=  (1 << 2);   // IN1 = 1
+    GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → giro horario
+    sentido = 0;               // sentido fijo
 }
 
-
-// <-------Funciones de control de botones------->
-
-// Botón INICIAR
-void btn_start(void)
+void enjuague(void)
 {
-	if ((ciclo != 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 0)) {
-	    // Arrancar ciclo
-	    flag_inicio = 1;
-	}
-	else if((ciclo == 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 0)){
-		// lcd_print("Seleccione ciclo");
-		flag_inicio = 0;
-	}
-	else if((ciclo != 0) && (ciclo_activo == 1) && (flag_tapa_abierta == 0)){
-		// lcd_print("Ciclo en proceso");
-	}
-	else if((ciclo != 0) && (ciclo_activo == 0) && (flag_tapa_abierta == 1)){
-		// lcd_print("Cerrar tapa");
-		flag_inicio = 0;
-	}
-}
+    TIM2->CCR1 = 25;
 
-// Botón CANCELAR
-void btn_cancelar(void)
-{
-    // Solo cancelar si hay un ciclo activo o seleccionado
-    if ((ciclo != 0) || (ciclo_activo == 1)) {
+    // Cada 3 ticks (ej. 300 ms, dependiendo del timer)
+    if ((ticks_segundos - timer_sentido) >= 3)
+    {
+        timer_sentido = ticks_segundos;  // guarda referencia de tiempo
+        sentido ^= 1;                    // alterna dirección
 
-        ciclo = 0;
-        ciclo_activo = 0;
-        flag_inicio = 0;
-        fsm_lavadora = 0;   // estado IDLE
-
-        // Apagar LEDs de etapa
-        GPIOC->ODR &= ~((1<<10)|(1<<11)|(1<<12));
-
-        // Detener motor (más adelante agregás la función)
-        // motor_stop();
-
-        // lcd_print("Ciclo cancelado");
-        // USART2_Putstring((uint8_t*)"Ciclo cancelado\r\n");
+        if (sentido == 0) {
+            GPIOC->ODR |=  (1 << 2);   // IN1 = 1
+            GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 (CW)
+        } else {
+            GPIOC->ODR &= ~(1 << 2);   // IN1 = 0
+            GPIOC->ODR |=  (1 << 3);   // IN2 = 1 (CCW)
+        }
     }
 }
 
-// Switch de tapa (seguridad)
-void leer_tapa(void)
+void centrifugado(void)
 {
-    if ((GPIOB->IDR & (1<<2)) == 0) {
-        flag_tapa_abierta = 1;   // tapa abierta (lee LOW)
-    } else {
-        flag_tapa_abierta = 0;   // tapa cerrada
-    }
-}
-
-void tipo_ciclo(){
-	if((flag_inicio = 1) && (flag_tapadera_abierta == 0)){
-
-	}
+    TIM2->CCR1 = 30;      // velocidad alta (~80%)
+    GPIOC->ODR |=  (1 << 2);   // IN1 = 1
+    GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → sentido horario
+    sentido = 0;
 }
 
 
-void initwasher(void)
+void delay_ms(uint32_t ms)
 {
-    // 1) Habilitar reloj base (HSI16)
-    RCC->CR |= (1 << 0);
-    while(!(RCC->CR & (1 << 2))); // Esperar a que esté listo
-    RCC->CFGR &= ~(0x3);          // HSI16 como SYSCLK
-    RCC->CFGR |=  (0x1 << 0);
-
-    // 2) Clocks GPIO
-    RCC->IOPENR |= (1 << 0) | (1 << 1) | (1 << 2); // GPIOA, GPIOB, GPIOC
-    RCC->APB2ENR |= (1u<<0);                   // SYSCFG
-
-    // 3) Config GPIO's
-
-    // LCD: PA4 (RS), PA5 (E), PA8–PA11 (D4–D7)
-    GPIOA->MODER &= ~((3<<(4*2))|(3<<(5*2))|(3<<(8*2))|(3<<(9*2))|(3<<(10*2))|(3<<(11*2)));
-    GPIOA->MODER |=  ((1<<(4*2))|(1<<(5*2))|(1<<(8*2))|(1<<(9*2))|(1<<(10*2))|(1<<(11*2)));
-
-    // Buzzer PWM: PA0 (AF5 → TIM2_CH1)
-    GPIOA->MODER &= ~(3<<(0*2));
-    GPIOA->MODER |=  (2<<(0*2));       // Alternate Function
-    GPIOA->AFR[0]  |=  (5<<(0*4));     // AF5
-
-    // USART2 TX/RX: PA2 (TX), PA3 (RX) → AF4
-    GPIOA->MODER &= ~((3<<(2*2))|(3<<(3*2)));
-    GPIOA->MODER |=  ((2<<(2*2))|(2<<(3*2)));
-    GPIOA->AFR[0]  |=  ((4<<(2*4))|(4<<(3*4)));
-
-
-    //GPIOB
-
-    // Keypad fila (PB0) → entrada con pull-up interno
-    GPIOB->MODER &= ~(3<<(0*2));
-    GPIOB->PUPDR &= ~(3<<(0*2));
-    GPIOB->PUPDR |=  (1<<(0*2));
-
-    // Keypad columnas (PB4–PB6) → salidas controladas por ODR
-    GPIOB->MODER &= ~((3<<(4*2))|(3<<(5*2))|(3<<(6*2)));
-    GPIOB->MODER |=  ((1<<(4*2))|(1<<(5*2))|(1<<(6*2)));
-    GPIOB->ODR   |=  ((1<<4)|(1<<5)|(1<<6)); // arranque HIGH
-
-
-    // Motor IN3–IN4 (PB8–PB9) → salidas
-    GPIOB->MODER &= ~((3<<(8*2))|(3<<(9*2)));
-    GPIOB->MODER |=  ((1<<(8*2))|(1<<(9*2)));
-
-    // Display enable (PB10–PB13) → salidas
-    GPIOB->MODER &= ~((3<<(10*2))|(3<<(11*2))|(3<<(12*2))|(3<<(13*2)));
-    GPIOB->MODER |=  ((1<<(10*2))|(1<<(11*2))|(1<<(12*2))|(1<<(13*2)));
-
-
-    //GPIOC
-
-    // Display segmentos (PC0–PC7) → salidas
-    GPIOC->MODER &= ~(
-        (3<<(0*2))|(3<<(1*2))|(3<<(2*2))|(3<<(3*2))|
-        (3<<(4*2))|(3<<(5*2))|(3<<(6*2))|(3<<(7*2))
-    );
-    GPIOC->MODER |= (
-        (1<<(0*2))|(1<<(1*2))|(1<<(2*2))|(1<<(3*2))|
-        (1<<(4*2))|(1<<(5*2))|(1<<(6*2))|(1<<(7*2))
-    );
-
-    // Motor IN1–IN2 (PC8–PC9) → salidas
-    GPIOC->MODER &= ~((3<<(8*2))|(3<<(9*2)));
-    GPIOC->MODER |=  ((1<<(8*2))|(1<<(9*2)));
-
-    // LEDs de etapa (PC10–PC12) → salidas
-    GPIOC->MODER &= ~((3<<(10*2))|(3<<(11*2))|(3<<(12*2)));
-    GPIOC->MODER |=  ((1<<(10*2))|(1<<(11*2))|(1<<(12*2)));
-
-    // Botones y tapa (PC13,PB1,PB2) → entradas
-    GPIOC->MODER &= ~(3<<(13*2));
-    GPIOB->MODER &= ~(3<<(1*2));
-    GPIOB->MODER &= ~(3<<(2*2));
-    GPIOB->PUPDR &= ~(3<<(2*2));
-    GPIOB->PUPDR |=  (1<<(2*2));   // pull-up interno
-
-    GPIOA->ODR = 0x0000;
-    GPIOB->ODR = 0x0000;
-    GPIOC->ODR = 0x0000;
-
-    // 4) EXIT (Flanco bajada)
-    // Keypad (filas) y Botones (PC13, PB1, PB2)
+    for (uint32_t i = 0; i < ms * 1600; i++)  // ajusta según tu reloj (aprox. 16 MHz)
+        __NOP();
 }
 
-
-int main (void){
-	initwasher();
+int main(){
+	system_init();
 	while(1){
+        // 🔹 Encender LED
+        GPIOA->ODR |= (1u << 12);
+        GPIOA->ODR |= (1u << 15);
+        GPIOB->ODR |= (1u << 10);
+        delay_ms(100);
+
+        if (!(GPIOC->IDR & (1u << 1)) ||
+            !(GPIOB->IDR & (1u << 12)))
+        {
+            GPIOA->ODR |= (1u << 6);  // buzzer ON
+            GPIOC->ODR |= (1 << 2);
+            GPIOC->ODR &= ~(1 << 3);
+        }else if(!(GPIOB->IDR & (1u << 11))){
+            GPIOC->ODR |= (1 << 3);
+            GPIOC->ODR &= ~(1 << 2);
+        }
+        else
+        {
+            GPIOA->ODR &= ~(1u << 6);  // buzzer OFF
+            GPIOC->ODR &= ~((1 << 2) | (1 << 3)); //Apago motor
+        }
+
+
+
+        // 🔹 Apagar LED
+        GPIOA->ODR &= ~(1u << 12);
+        GPIOA->ODR &= ~(1u << 15);
+        GPIOB->ODR &= ~(1u << 10);
+        delay_ms(100);
 
 	}
-
 }
+
+
