@@ -1,6 +1,10 @@
-../Src/main.c:48:6:system_init	1
-../Src/main.c:133:6:lavado	1
-../Src/main.c:141:6:enjuague	3
-../Src/main.c:161:6:centrifugado	1
-../Src/main.c:170:6:delay_ms	2
-../Src/main.c:176:5:main	4
+../Src/main.c:50:6:system_init	1
+../Src/main.c:140:6:lavado	1
+../Src/main.c:148:6:enjuague	3
+../Src/main.c:168:6:centrifugado	1
+../Src/main.c:177:6:lcd_pulso	1
+../Src/main.c:185:6:lcd_4bcommand	1
+../Src/main.c:206:6:lcd_init	2
+../Src/main.c:243:6:lcd_data	2
+../Src/main.c:264:6:delay_ms	2
+../Src/main.c:270:5:main	4

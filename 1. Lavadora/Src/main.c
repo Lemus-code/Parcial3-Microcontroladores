@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include "stm32l053xx.h"
 // LCD 16x2 (modo 4 bits):
 //        D4–D7 = PA8–PA11
@@ -44,6 +45,7 @@
 //        TX = PA2  (USART2_TX)
 //        RX = PA3  (USART2_RX)
 
+void lcd_init();
 
 void system_init(){
 	//1. HSI 16Mhz
@@ -64,6 +66,9 @@ void system_init(){
 	GPIOC->MODER &= ~((3<<(5 * 2)) | (3<<(6 * 2)) | (3<<(8 * 2)) | (3<<(9 * 2)));
 	GPIOC->MODER |= ((1<<(5 * 2)) | (1<<(6 * 2)) | (1<<(8 * 2)) | (1<<(9 * 2)));
 
+	//C. LCD
+	GPIOA->MODER &= ~((3<<(4*2)) | (3<<(5*2)) | (3<<(8 * 2)) | (3<<(9 * 2)) | (3<<(10 * 2)) | (3<<(11 * 2)));
+	GPIOA->MODER |= ((1<<(4*2)) | (1<<(5*2)) | (1<<(8 * 2)) | (1<<(9 * 2)) | (1<<(10 * 2)) | (1<<(11 * 2)));
 
 	//D. Leds salida (PA12, PA15, PB7)
 	GPIOA->MODER &= ~((3 << (12 * 2)) | (3<<(15 * 2)));
@@ -117,6 +122,8 @@ void system_init(){
 
 	//5. Reinicio de todo
 	GPIOB->ODR &= ~((1 << 8) | (1 << 9)); //Apago motor
+
+	lcd_init();
 }
 
 //Variables globales
@@ -166,6 +173,93 @@ void centrifugado(void)
     sentido = 0;
 }
 
+//Funciones LCD con delay (editarlo)
+void lcd_pulso(){
+    // Enabled
+    GPIOA->ODR |= (1 << 5);
+    delay_ms(1);
+    GPIOA->ODR &= ~(1 << 5);
+    delay_ms(2);
+}
+
+void lcd_4bcommand(uint16_t comando) {
+    uint32_t bus_alto = (comando & 0xF0) << 4;
+    uint32_t bus_bajo = ((comando << 4) & 0xF0) << 4;
+
+    // RS = 0 → modo comando
+    GPIOA->ODR &= ~(1 << 4);
+
+    // Enviar nibble alto
+    GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+    GPIOA->ODR |= bus_alto;
+    lcd_pulso();
+
+    // Enviar nibble bajo
+    GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+    GPIOA->ODR |= bus_bajo;
+    lcd_pulso();
+
+    delay_ms(2); // espera final
+}
+
+
+void lcd_init() {
+    int contador = 0;
+
+    // Despertar LCD
+    while (contador < 3) {
+        // RS = 0 para comando y RW a GND
+        GPIOA->ODR &= ~(1 << 4);
+
+        // Limpiar pines D4-D7
+        GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+
+        // D4-D5
+        GPIOA->ODR |= (1 << 8) | (1 << 9); //comado 0b0011
+
+        lcd_pulso();
+        contador++;
+    }
+
+    GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+    GPIOA->ODR |= (1 << 9);  //0b0010 para indicarle que usamos 4 bits
+    lcd_pulso();
+
+    delay_ms(2);
+
+    lcd_4bcommand(0x28);
+
+    // Comando para encender pantalla
+    lcd_4bcommand(0x0C);
+
+    // Comando para limpiar display
+    lcd_4bcommand(0x01);
+
+    // Cursor avanza a la derecha
+    lcd_4bcommand(0x06);
+}
+
+//Enviar data
+void lcd_data(char* informacion){
+	for(uint8_t i = 0; i < strlen(informacion); i++){
+		uint32_t bus_alto = (informacion[i] & 0xF0) << 4;
+		uint32_t bus_bajo = ((informacion[i] << 4) & 0xF0)<< 4;
+		// RS = 1 → modo comando
+		GPIOA->ODR |= (1 << 4);
+
+		// Enviar nibble alto
+		GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+		GPIOA->ODR |= bus_alto;
+		lcd_pulso();
+
+		// Enviar nibble bajo
+		GPIOA->ODR &= ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11));
+		GPIOA->ODR |= bus_bajo;
+		lcd_pulso();
+
+		delay_ms(2); // espera final
+	}
+}
 
 void delay_ms(uint32_t ms)
 {
@@ -175,7 +269,9 @@ void delay_ms(uint32_t ms)
 
 int main(){
 	system_init();
+	lcd_data("Ya jalo xd");
 	while(1){
+
         // 🔹 Encender LED
         GPIOA->ODR |= (1u << 12);
         GPIOA->ODR |= (1u << 15);
