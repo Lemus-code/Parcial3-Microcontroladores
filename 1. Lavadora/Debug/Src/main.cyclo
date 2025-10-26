@@ -1,6 +1,6 @@
 ../Src/main.c:48:6:system_init	1
-../Src/main.c:119:6:lavado	1
-../Src/main.c:124:6:enjuague	3
-../Src/main.c:142:6:centrifugado	1
-../Src/main.c:147:6:delay_ms	2
-../Src/main.c:153:5:main	4
+../Src/main.c:133:6:lavado	1
+../Src/main.c:141:6:enjuague	3
+../Src/main.c:161:6:centrifugado	1
+../Src/main.c:170:6:delay_ms	2
+../Src/main.c:176:5:main	4

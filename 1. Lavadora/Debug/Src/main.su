@@ -1,6 +1,6 @@
 ../Src/main.c:48:6:system_init	8	static
-../Src/main.c:119:6:lavado	8	static
-../Src/main.c:124:6:enjuague	8	static
-../Src/main.c:142:6:centrifugado	8	static
-../Src/main.c:147:6:delay_ms	24	static,ignoring_inline_asm
-../Src/main.c:153:5:main	8	static
+../Src/main.c:133:6:lavado	8	static
+../Src/main.c:141:6:enjuague	8	static
+../Src/main.c:161:6:centrifugado	8	static
+../Src/main.c:170:6:delay_ms	24	static,ignoring_inline_asm
+../Src/main.c:176:5:main	8	static

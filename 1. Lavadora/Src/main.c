@@ -54,18 +54,28 @@ void system_init(){
 	RCC->IOPENR |= (1<<0) | (1<<1) | (1<<2);
 
 	//3. Configuración Puertos (Keypad, Displays, Lcd, Leds, Buzzer, Push, Switch, Motor)
+	//B. Display
 
-	//Leds salida (PA12, PA15, PB7)
+	//A-G salida
+	GPIOB->MODER &= ~((3<<(0 * 2)) | (3<<(1 * 2)) | (3<<(2 * 2)) | (3<<(3 * 2)) | (3<<(4 * 2)) | (3<<(5 * 2)) | (3<<(6 * 2)));
+	GPIOB->MODER |= ((1<<(0 * 2)) | (1<<(1 * 2)) | (1<<(2 * 2)) | (1<<(3 * 2)) | (1<<(4 * 2)) | (1<<(5 * 2)) | (1<<(6 * 2)));
+
+	//Enables D1-D4
+	GPIOC->MODER &= ~((3<<(5 * 2)) | (3<<(6 * 2)) | (3<<(8 * 2)) | (3<<(9 * 2)));
+	GPIOC->MODER |= ((1<<(5 * 2)) | (1<<(6 * 2)) | (1<<(8 * 2)) | (1<<(9 * 2)));
+
+
+	//D. Leds salida (PA12, PA15, PB7)
 	GPIOA->MODER &= ~((3 << (12 * 2)) | (3<<(15 * 2)));
 	GPIOA->MODER |=  ((1 << (12 * 2)) | (1<<(15 * 2)));
 	GPIOB->MODER &= ~(3 << (10 * 2));
 	GPIOB->MODER |=  (1 << (10 * 2));
 
-	//buzzer salida
+	//E. buzzer salida
 	GPIOA->MODER &= ~(3 << (6 * 2));
 	GPIOA->MODER |=  (1 << (6 * 2));
 
-	// Push Buttons entrada y switch
+	//F. Push Buttons entrada y switch
 	GPIOC->MODER &= ~(3 << (1 * 2));
 	GPIOB->MODER &= ~((3 << (11 * 2)) | (3<<(12 * 2)));
 
@@ -79,7 +89,7 @@ void system_init(){
 	GPIOB->PUPDR &= ~(3u << (12 * 2));  // Limpia
 	GPIOB->PUPDR |=  (2u << (12 * 2));  // 10 = Pull-down
 
-	//Motor (salida) IN1 e IN2
+	//G. Motor (salida) IN1 e IN2
 	GPIOC->MODER &= ~((3<<(2 * 2)) | (3<<(3 * 2)));
 	GPIOC->MODER |= ((1<<(2 * 2)) | (1<<(3 * 2)));
 
@@ -92,7 +102,7 @@ void system_init(){
 
 	//4. Timers
 
-	//Tim2 para motor PA0
+	//A. Tim2 para motor PA0
 	RCC->APB1ENR |= (1<<0); //Habilitar el timer
 	TIM2->PSC = 16 - 1;   // 1 MHz
 	TIM2->ARR = 50 - 1;   // 1 MHz / 50 = 20 kHz
@@ -171,6 +181,15 @@ int main(){
         GPIOA->ODR |= (1u << 15);
         GPIOB->ODR |= (1u << 10);
         delay_ms(100);
+
+        //Encender display
+        GPIOB->ODR |= ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6));
+
+        //Enabled
+        GPIOC->ODR |= (1 << 5);
+        GPIOC->ODR |= (1 << 6);
+        GPIOC->ODR |= (1 << 8);
+        GPIOC->ODR |= (1 << 9);
 
         if (!(GPIOC->IDR & (1u << 1)) ||
             !(GPIOB->IDR & (1u << 12)))
