@@ -72,12 +72,16 @@
 uint8_t timer_sentido = 0;
 uint8_t ticks_segundos = 0;
 int8_t sentido = -1;
+volatile uint16_t segundos_etapa = 0;
+volatile uint8_t etapa = 0;
+
 
 //B. Lcd
 volatile uint8_t lcd_state = 0;
 volatile uint8_t lcd_step = 0;
 volatile uint32_t tick_ms = 0;
 volatile uint8_t lcd_index = 0;
+volatile uint8_t fin_ciclo_tick = 0;
 const char *lcd_text = "Seleccione Ciclo";
 
 // C. Variables internas del keypad (para debounce)
@@ -93,7 +97,8 @@ volatile uint8_t tick_seg = 0;
 volatile uint8_t ciclo_activo = 0;
 volatile uint16_t tiempo_total = 0; // tiempo total en segundos
 
-
+//F. Buzzer
+volatile uint16_t buzzer_ms = 0;
 
 void system_init(){
 	//1. HSI 16Mhz
@@ -105,13 +110,13 @@ void system_init(){
 
 	//3. Configuración Puertos (Keypad, Displays, Lcd, Leds, Buzzer, Push, Switch, Motor)
 
-	// A. === Keypad (1x3) ===
-	// Fila PC4 → entrada con pull-up
+	// A. Keypad (1x3)
+	// Fila PC4 entrada con pull-up
 	GPIOC->MODER &= ~(3 << (4*2));
 	GPIOC->PUPDR &= ~(3 << (4*2));
 	GPIOC->PUPDR |=  (1 << (4*2)); // Pull-up activado
 
-	// Columnas PB7–PB9 → salidas
+	// Columnas PB7–PB9 salidas
 	GPIOB->MODER &= ~((3<<(7*2)) | (3<<(8*2)) | (3<<(9*2)));
 	GPIOB->MODER |=  ((1<<(7*2)) | (1<<(8*2)) | (1<<(9*2)));
 
@@ -149,13 +154,13 @@ void system_init(){
 
 	// Activar pull-up internos en los botones
 	GPIOC->PUPDR &= ~(3u << (1 * 2));
-	GPIOC->PUPDR |=  (1u << (1 * 2));   // 01 = pull-up
+	GPIOC->PUPDR |=  (1u << (1 * 2));   // pull-up
 
 	GPIOB->PUPDR &= ~(3u << (11 * 2));
-	GPIOB->PUPDR |=  (1u << (1 * 2));
+	GPIOB->PUPDR |=  (1u << (1 * 2));	// pull-up
 
-	GPIOB->PUPDR &= ~(3u << (12 * 2));  // Limpia
-	GPIOB->PUPDR |=  (2u << (12 * 2));  // 10 = Pull-down
+	GPIOB->PUPDR &= ~(3u << (12 * 2));
+	GPIOB->PUPDR |=  (2u << (12 * 2));  // Pull-down
 
 	//G. Motor (salida) IN1 e IN2
 	GPIOC->MODER &= ~((3<<(2 * 2)) | (3<<(3 * 2)));
@@ -165,7 +170,7 @@ void system_init(){
 	GPIOA->MODER &= ~(3 << (0*2));
 	GPIOA->MODER |=  (2 << (0*2));       // Modo alternativo
 	GPIOA->AFR[0] &= ~(0xF << (0*4));  // Limpia los 4 bits del AF de PA0
-	GPIOA->AFR[0] |=  (2 << (0*4));   // Asigna AF2 → TIM2_CH1
+	GPIOA->AFR[0] |=  (2 << (0*4));   // Asigna AF2 TIM2_CH1
 
 
 	//4. Timers
@@ -174,7 +179,7 @@ void system_init(){
 	RCC->APB1ENR |= (1<<0); //Habilitar el timer
 	TIM2->PSC = 16 - 1;   // 1 MHz
 	TIM2->ARR = 50 - 1;   // 1 MHz / 50 = 20 kHz
-	TIM2->CCR1 = 21;			// 50% duty inicial
+	TIM2->CCR1 = 21;
 	TIM2->CCMR1 &= ~(7u << 4);			//limpio el modo
 	TIM2->CCMR1 |=  (6u << 4);          // PWM Mode 1 que es 110 = 6
 	TIM2->CCER  |=  (1u << 0);            // Habilita salida CH1
@@ -192,20 +197,22 @@ void system_init(){
 	TIM21->CR1 |= (1<<0);	// activar conteo
 	NVIC_EnableIRQ(TIM21_IRQn);   // Habilita interrupción global del TIM21
 
-	// === TIM22: reloj interno 1 Hz (interrupción cada 1 s) ===
+	// C. TIM22 clk interno (1s)
 	RCC->APB2ENR |= (1 << 5);     // Habilita TIM22 clock
-	TIM22->PSC = 1600 - 1;        // 16 MHz / 1600 = 10 kHz
-	TIM22->ARR = 10000 - 1;       // 10 kHz / 10000 = 1 Hz → 1 s
+	TIM22->PSC = 1600 - 1;
+	TIM22->ARR = 1000 - 1;
 	TIM22->CNT = 0;
 	TIM22->SR  &= ~(1 << 0);      // Limpia bandera de update
 	TIM22->DIER |= (1 << 0);      // Habilita interrupción por update
 	TIM22->CR1  |= (1 << 0);      // Arranca timer
-	NVIC_EnableIRQ(TIM22_IRQn);   // Habilita IRQ en NVIC
+	NVIC_EnableIRQ(TIM22_IRQn);
+
+	// 5. Interrupciones
 
 	//A. PC1 (Start)
 	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;   // Habilita SYSCFG (para mapear EXTI)
 
-	// Mapear EXTI1 → PC1
+	// Mapear EXTI1 PC1
 	SYSCFG->EXTICR[0] &= ~(0xF << 4);       // Limpia bits [7:4] para EXTI1
 	SYSCFG->EXTICR[0] |=  (0x2 << 4);       // 0010 = Puerto C
 
@@ -216,6 +223,35 @@ void system_init(){
 
 	// Habilitar interrupción global EXTI0_1 (porque cubre EXTI0 y EXTI1)
 	NVIC_EnableIRQ(EXTI0_1_IRQn);
+
+	//B. PB11 (Cancelar)
+
+	// Mapear EXTI11 PB11
+	SYSCFG->EXTICR[2] &= ~(0xF << 12);
+	SYSCFG->EXTICR[2] |=  (0x1 << 12);
+
+	// Configurar EXTI11
+	EXTI->IMR  |=  (1 << 11);
+	EXTI->FTSR |=  (1 << 11);
+	EXTI->RTSR &= ~(1 << 11);
+
+	//C. PB12
+
+
+	// Mapear EXTI11 PB12
+	SYSCFG->EXTICR[3] &= ~(0xF << 0);
+	SYSCFG->EXTICR[3] |=  (0x1 << 0);
+
+	// Configurar EXTI12
+	EXTI->IMR  |=  (1 << 12);
+	EXTI->FTSR |=  (1 << 12);
+	EXTI->RTSR |= (1 << 12);
+
+
+
+
+	// Habilitar interrupción global EXTI4_15 (maneja líneas 4–15)
+	NVIC_EnableIRQ(EXTI4_15_IRQn);
 
 	//6. USART2
 	RCC->APB1ENR |= (1 << 17);      // Habilitar reloj USART2
@@ -243,35 +279,55 @@ void system_init(){
 
 void lavado(void)
 {
-    TIM2->CCR1 = 21;
+	GPIOA->ODR |= (1<<15);
+	GPIOA->ODR &= ~(1<<12);
+	GPIOB->ODR &= ~(1<<10);
+
+    TIM2->CCR1 = 23;
     GPIOC->ODR |=  (1 << 2);   // IN1 = 1
     GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → giro horario
     sentido = 0;               // sentido fijo
+
 }
 
 void enjuague(void)
 {
-    TIM2->CCR1 = 25;
+    static uint32_t last_toggle = 0;
+    static uint8_t sentido_local = 0;
+    static uint8_t pwm_actual = 20; // duty dinámico
 
-    // Cada 3 ticks (ej. 300 ms, dependiendo del timer)
-    if ((ticks_segundos - timer_sentido) >= 3)
+    // ----- LED control -----
+    GPIOA->ODR &= ~(1 << 15);  // apaga LED lavado
+    GPIOA->ODR |=  (1 << 12);  // enjuague ON
+    GPIOB->ODR &= ~(1 << 10);  // apaga centrifugado
+
+    // ----- Velocidad base -----
+    if (pwm_actual < 28) pwm_actual++;  // pequeña rampa
+    TIM2->CCR1 = pwm_actual;            // ~55% duty
+
+    // ----- Cambio de sentido cada 200 ms -----
+    if ((tick_ms - last_toggle) >= 200)
     {
-        timer_sentido = ticks_segundos;  // guarda referencia de tiempo
-        sentido ^= 1;                    // alterna dirección
+        last_toggle = tick_ms;
+        sentido_local ^= 1;
 
-        if (sentido == 0) {
-            GPIOC->ODR |=  (1 << 2);   // IN1 = 1
-            GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 (CW)
+        if (sentido_local == 0) {
+            GPIOC->ODR |=  (1 << 2);   // CW
+            GPIOC->ODR &= ~(1 << 3);
         } else {
-            GPIOC->ODR &= ~(1 << 2);   // IN1 = 0
-            GPIOC->ODR |=  (1 << 3);   // IN2 = 1 (CCW)
+            GPIOC->ODR &= ~(1 << 2);   // CCW
+            GPIOC->ODR |=  (1 << 3);
         }
     }
 }
 
 void centrifugado(void)
 {
-    TIM2->CCR1 = 30;      // velocidad alta (~80%)
+	GPIOA->ODR &= ~(1<<12);
+	GPIOA->ODR &= ~(1<<15);
+	GPIOB->ODR |= (1<<10);
+
+    TIM2->CCR1 = 25;
     GPIOC->ODR |=  (1 << 2);   // IN1 = 1
     GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → sentido horario
     sentido = 0;
@@ -507,12 +563,19 @@ void clk_inverso(void)
     else
     {
         ciclo_activo = 0;
-        LCD_PrintNew("¡Listo!");
-        USART2_write_string("\r\nCiclo terminado\r\n");
+
+        //Motor desactivado
+        GPIOC->ODR &=  ~(1 << 2);   // IN1 = 1
+        GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → giro horario
+
+        //Leds apagadas
+        GPIOB->ODR &= ~(1 << 10);
+
+        //
+        USART2_write_string("Ciclo terminado\r\n");
+        ciclo = 0;
     }
 }
-
-
 
 //<-----Funciones USART2----->
 void USART2_write_char(char ch) {
@@ -542,8 +605,6 @@ void USART2_write_uint(uint32_t num) {
     while (i--) USART2_write_char(buffer[i]);
 }
 
-
-
 //<------Funciones Logica Lavadora------->
 void selec_ciclo(){
 
@@ -553,15 +614,19 @@ void selec_ciclo(){
 		switch(ciclo){
 		    case 1:
 		        LCD_PrintNew("Ciclo Rapido 3M");
+		        USART2_write_string("Ciclo Rapido 3M seleccionado\r\n");
 		        tiempo_total = 180; // 3 minutos
 
 		        display_clk[0] = 0;  // decenas de minuto
 		        display_clk[1] = 3;  // unidades de minuto
 		        display_clk[2] = 0; // decenas de segundo
 		        display_clk[3] = 0; // unidades de segundo
+
+
 		        break;
 		    case 2:
 		        LCD_PrintNew("Ciclo Normal 6M");
+		        USART2_write_string("Ciclo Normal 6M seleccionado\r\n");
 		        tiempo_total = 360; // 6 minutos
 		        display_clk[0] = 0;  // decenas de minuto
 		        display_clk[1] = 6;  // unidades de minuto
@@ -570,6 +635,7 @@ void selec_ciclo(){
 		        break;
 		    case 3:
 		        LCD_PrintNew("Ciclo Pesado 9M");
+		        USART2_write_string("Ciclo Pesado 9M seleccionado\r\n");
 		        tiempo_total = 540; // 9 minutos
 		        display_clk[0] = 0;  // decenas de minuto
 		        display_clk[1] = 9;  // unidades de minuto
@@ -582,17 +648,27 @@ void selec_ciclo(){
 
 }
 
+void control_etapa(){
+	switch(etapa){
+	case 1:
+		lavado();
+		break;
 
-//<------Delay (quitarlo hasta implementar todo con timers)-------->
-void delay_ms(uint32_t ms)
-{
-    for (uint32_t i = 0; i < ms * 1600; i++)  // ajusta según tu reloj (aprox. 16 MHz)
-        __NOP();
+	case 2:
+		enjuague();
+		break;
+	case 3:
+		centrifugado();
+		break;
+
+	}
+
 }
 
 //<-------Handlers de interrupciones-------->
 void TIM21_IRQHandler(void)
 {
+	static uint8_t toggle = 0;
     if (TIM21->SR & (1<<0)) // Canal 1
     {
         TIM21->SR &= ~(1<<0);  // limpiar flag
@@ -611,21 +687,92 @@ void TIM21_IRQHandler(void)
         	 selec_ciclo();
         }
 
+
+        //Activar, desactivar buzzer
+        if (buzzer_ms > 0) {
+            toggle ^= 1; // alterna 0-1 cada ms
+            if (toggle)
+                GPIOA->ODR |=  (1 << 6);  // ON
+            else
+                GPIOA->ODR &= ~(1 << 6);  // OFF
+
+            buzzer_ms--;
+        } else {
+            GPIOA->ODR &= ~(1 << 6); // asegurarse que quede apagado
+        }
+
+        // Mostrar "Seleccione ciclo" después de 2 segundos del fin
+        if (fin_ciclo_tick > 0 && tick_ms >= fin_ciclo_tick) {
+            fin_ciclo_tick = 0;
+            if (ciclo_activo == 0 && ciclo == 0) {
+                LCD_PrintNew("Seleccione ciclo");
+            }
+        }
+
+
     }
 }
 
 void TIM22_IRQHandler(void)
 {
-    if (TIM22->SR & (1<<0)) // Canal 1
+    if (TIM22->SR & (1 << 0)) // Canal 1
     {
-        TIM22->SR &= ~(1<<0);  // limpiar flag
+        TIM22->SR &= ~(1 << 0);
         tick_seg++;
 
-        if(ciclo_activo == 1){
-        	clk_inverso();
-        	USART2_write_string("\r\nConteo Regresivo iniciado\r\n");
-        }
+        if (ciclo_activo)
+        {
+            clk_inverso();        // Actualiza el display regresivo
+            segundos_etapa++;     // Contador interno por etapa
+            control_etapa();      // Ejecuta comportamiento según etapa
 
+            // 🔹 Duración por etapa según el ciclo
+            uint16_t etapa_duracion = 0;
+            switch (ciclo)
+            {
+                case 1: etapa_duracion = 60;  break;  // 1 min
+                case 2: etapa_duracion = 120; break;  // 2 min
+                case 3: etapa_duracion = 180; break;  // 3 min
+                default: etapa_duracion = 60; break;  // seguridad
+            }
+
+            // 🔸 CAMBIO AUTOMÁTICO DE ETAPAS
+            if (etapa == 1 && segundos_etapa >= etapa_duracion) {
+                etapa = 2;
+                segundos_etapa = 0;
+                USART2_write_string("Cambio -> Enjuague\r\n");
+        	    LCD_PrintNew("Enjuague");
+        	    USART2_write_string("Etapa Enjuague\r\n");
+            }
+            else if (etapa == 2 && segundos_etapa >= etapa_duracion) {
+                etapa = 3;
+                segundos_etapa = 0;
+                USART2_write_string("Cambio -> Centrifugado\r\n");
+        	    LCD_PrintNew("Centrifugado");
+        	    USART2_write_string("Etapa: Centrifugado\r\n");
+            }
+            else if (etapa == 3 && tiempo_total == 0) {
+                segundos_etapa = 0;
+                etapa = 0;
+                ciclo_activo = 0;
+                ciclo = 0;
+
+                LCD_PrintNew("Ciclo Finalizado");
+                USART2_write_string("Ciclo completo!\r\n");
+
+                //Motor desactivado
+                GPIOC->ODR &= ~((1 << 2) | (1 << 3));
+
+                //Leds apagadas
+                GPIOA->ODR &= ~((1 << 12) | (1 << 15));
+                GPIOB->ODR &= ~(1 << 10);
+
+                // 🔊 Buzzer no bloqueante: 1 segundo
+                buzzer_ms = 1000;
+
+                fin_ciclo_tick = tick_ms + 2000;
+            }
+        }
     }
 }
 
@@ -635,57 +782,85 @@ void EXTI0_1_IRQHandler(void)
 	    EXTI->PR = (1 << 1);
 
 	    if (ciclo != 0) {
-	        USART2_write_string("\r\nBoton START presionado\r\n");
-	        ciclo_activo = 1;
+	        USART2_write_string("Boton START presionado\r\n");
+		    LCD_PrintNew("Lavado");
+		    USART2_write_string("Etapa Lavado\r\n");
+	        ciclo_activo = 1;\
+	        etapa = 1;
 	    } else {
-	        USART2_write_string("\r\nNo hay ciclo seleccionado\r\n");
+	        USART2_write_string("No hay ciclo seleccionado\r\n");
 	        LCD_PrintNew("No ciclo, elija");
 	        ciclo_activo = 0;
 	    }
 	}
 }
 
+void EXTI4_15_IRQHandler(void){
+	if (EXTI->PR & (1 << 11)) {
+		    EXTI->PR = (1 << 11);
+
+		    if (ciclo == 0) {
+		    	LCD_PrintNew("Sin ciclo activo");
+		        USART2_write_string("No hay ciclo activo para cancelar\r\n");
+		    } else {
+		    	LCD_PrintNew("Seleccione Ciclo");
+		        USART2_write_string("Ciclo CANCELADO\r\n");
+
+		        //Borramos ciclo y tiempo
+		        ciclo_activo = 0;
+		        ciclo = 0;
+		        tiempo_total = 0;
+		        segundos_etapa = 0;
+
+		        //Apagamos motor
+		        GPIOC->ODR &=  ~(1 << 2);   // IN1 = 0
+		        GPIOC->ODR &= ~(1 << 3);   // IN2 = 0
+
+		        //Apagar Led
+		        GPIOA->ODR &= ~(1<<12);
+		        GPIOA->ODR &= ~(1<<15);
+		        GPIOB->ODR &= ~(1<<10);
+
+		        //Reiniciamos 00:00
+		        actualizar_display_desde_segundos();
+		    }
+		}
+
+	if (EXTI->PR & (1 << 12)) {
+	    EXTI->PR = (1 << 12); // limpiar flag
+
+	    // Leemos estado actual de la tapa
+	    uint8_t tapa_cerrada = (GPIOB->IDR & (1 << 12)) ? 1 : 0;
+
+	    if (!tapa_cerrada) {
+	        USART2_write_string("Cierre tapa \r\n");
+	        LCD_PrintNew("Tapa abierta!");
+	        ciclo_activo = 0;
+
+	        // Apagar motor y LEDs
+	        GPIOC->ODR &= ~((1 << 2) | (1 << 3));
+	        GPIOA->ODR &= ~((1 << 12) | (1 << 15));
+	        GPIOB->ODR &= ~(1 << 10);
+
+	        // Aviso sonoro corto
+	        buzzer_ms = 300;
+	    }
+	    else {
+	    	USART2_write_string("Reanudando..");
+	        buzzer_ms = 100;
+
+	        // Solo reanudar si había un ciclo activo previamente
+	        if (tiempo_total > 0 && ciclo != 0 && etapa != 0) {
+	            ciclo_activo = 1;
+	        }
+	    }
+	}
+
+}
 
 int main(){
-	system_init();
+system_init();
 	while(1){
-
-        // 🔹 Encender LED
-       // GPIOA->ODR |= (1u << 12);
-       /* GPIOA->ODR |= (1u << 15);
-        GPIOB->ODR |= (1u << 10);
-        delay_ms(100);
-
-
-        if (!(GPIOC->IDR & (1u << 1)) ||
-            !(GPIOB->IDR & (1u << 12)))
-        {
-            GPIOA->ODR |= (1u << 6);  // buzzer ON
-            GPIOC->ODR |= (1 << 2);
-            GPIOC->ODR &= ~(1 << 3);
-
-            LCD_PrintNew("Nuevo texto");
-        }else if(!(GPIOB->IDR & (1u << 11))){
-            GPIOC->ODR |= (1 << 3);
-            GPIOC->ODR &= ~(1 << 2);
-        }
-        else
-        {
-            GPIOA->ODR &= ~(1u << 6);  // buzzer OFF
-            GPIOC->ODR &= ~((1 << 2) | (1 << 3)); //Apago motor
-        }
-
-
-
-        // 🔹 Apagar LED
-        //GPIOA->ODR &= ~(1u << 12);
-        GPIOA->ODR &= ~(1u << 15);
-        GPIOB->ODR &= ~(1u << 10);
-        delay_ms(100);*/
-
-
 
 	}
 }
-
-
