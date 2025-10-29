@@ -157,9 +157,10 @@ flowchart TD
 
 ## 🎥 Video de Demostración
 Demostración Física:
-[![Ver video](https://img.youtube.com/vi/HCbIdR3-43Y/0.jpg)](https://youtu.be/XXXXXX)
+![Ver video](https://youtu.be/XXXXXX)
 
 Explicación código:
-[![Ver video](https://img.youtube.com/vi/HCbIdR3-43Y/0.jpg)](https://youtu.be/HCbIdR3-43Y)
+![Ver video](https://youtu.be/HCbIdR3-43Y)
+
 
 
