@@ -105,9 +105,9 @@ El cambio de vista se realiza con el **botón U**, el cual pasa por módulos de 
 
 ### Ejercicio 1 – Implementación de FSM
 - FSM con reloj integrado:
-  👉 [https://youtu.be/OaL7UdaPSfI]()  
+  👉 [https://youtu.be/OaL7UdaPSfI](https://youtu.be/CA0SrCMLTzY?si=9Zm16J9bX2bOYJK3)  
 - Explicación del código:  
-  👉 [https://youtu.be/86AQyynaU6M]()
+  👉 [https://youtu.be/86AQyynaU6M](https://youtu.be/1jGhOcW8-Ik)
 
 ### Ejercicio 2 – Flujo de Vivado
 Demostración del flujo completo de diseño en Vivado:
@@ -118,6 +118,7 @@ Demostración del flujo completo de diseño en Vivado:
 
 📺 Explicación completa:  
 👉 [https://youtu.be/46htZkBVLcM]()
+
 
 
 
