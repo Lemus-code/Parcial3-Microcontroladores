@@ -117,7 +117,8 @@ Demostración del flujo completo de diseño en Vivado:
 4. **Bitstream / Hardware Manager** – Generación del `.bit` y programación en FPGA.
 
 📺 Explicación completa:  
-👉 [https://youtu.be/46htZkBVLcM]()
+👉 [https://youtu.be/46htZkBVLcM](https://youtu.be/XVCBWMOdC5Q)
+
 
 
 
