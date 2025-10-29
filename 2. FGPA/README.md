@@ -105,9 +105,9 @@ El cambio de vista se realiza con el **botón U**, el cual pasa por módulos de 
 
 ### Ejercicio 1 – Implementación de FSM
 - FSM con reloj integrado:
-  👉 [https://youtu.be/OaL7UdaPSfI](https://youtu.be/OaL7UdaPSfI)  
+  👉 [https://youtu.be/OaL7UdaPSfI]()  
 - Explicación del código:  
-  👉 [https://youtu.be/86AQyynaU6M](https://youtu.be/86AQyynaU6M)
+  👉 [https://youtu.be/86AQyynaU6M]()
 
 ### Ejercicio 2 – Flujo de Vivado
 Demostración del flujo completo de diseño en Vivado:
@@ -117,7 +117,8 @@ Demostración del flujo completo de diseño en Vivado:
 4. **Bitstream / Hardware Manager** – Generación del `.bit` y programación en FPGA.
 
 📺 Explicación completa:  
-👉 [https://youtu.be/46htZkBVLcM](https://youtu.be/46htZkBVLcM)
+👉 [https://youtu.be/46htZkBVLcM]()
+
 
 
 
