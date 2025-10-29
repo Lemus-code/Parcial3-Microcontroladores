@@ -57,8 +57,7 @@ El código está completamente desarrollado en **C bajo entorno bare-metal**, ha
    - **Centrifugado**
 5. Cada etapa dura un tiempo proporcional al ciclo elegido.  
 6. El **display 7 segmentos** muestra el tiempo restante en formato `MM:SS`.  
-7. Al finalizar, suena el **buzzer** y el LCD muestra “Ciclo finalizado”.
-
+7. Al finalizar, suena el **buzzer** y el LCD muestra vuelve a solicitar ciclo.
 ---
 
 ## 🔄 Control del Motor
@@ -162,4 +161,5 @@ Demostración Física:
 
 Explicación código:
 [![Ver video](https://img.youtube.com/vi/HCbIdR3-43Y/0.jpg)](https://youtu.be/HCbIdR3-43Y)
+
 
