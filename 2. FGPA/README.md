@@ -1,80 +1,124 @@
-# VivePass + Reloj Local (Basys3 · SystemVerilog)
-
-> Sistema de acceso vehicular basado en **FSM Moore/Mealy** con visualización en **7 segmentos** para el conteo de dígitos leídos y un **reloj local (hh:mm)** en la tarjeta Basys3.
+# Serie 2 – Implementación de FSM con Multiplexación de Displays y Programación en FPGA (Basys3)
 
 ---
 
-## 🎯 Objetivo
+## 🧠 Descripción General
 
-- **VivePass** sustituye el uso de tickets por un **sticker único** en el vehículo.  
-- El sistema está compuesto por:
-  - **FSM Moore:** mide la **longitud** del código leído (`L = 0..3`).
-  - **FSM Mealy:** controla la **talanquera**, abriéndola (`A = 1`) solo si `ST = 1` y `L == 3`, confirmando lectura con `C`.
+Este proyecto implementa y complementa el sistema **VivePass**, una máquina de estados finitos (**FSM**) ejecutada en **hardware real (FPGA Basys3)**.  
+El sistema combina la lógica secuencial de control vehicular (garita de acceso) con una **interfaz visual multiplexada** que muestra tanto el estado del sistema como un **reloj digital 24 h**, todo dentro del mismo hardware.
 
-Esta versión añade:
-- Un **display de 7 segmentos** que muestra el **conteo de dígitos** o el **reloj local**.
-- Un **reloj hh:mm (24h)** completamente funcional y sincronizado con el `clk` de la Basys3.
+El diseño está escrito en **SystemVerilog**, sintetizado en **Vivado**, y mapeado a los recursos físicos de la **Basys3 (Artix-7)**.
 
 ---
 
+## ⚙️ Módulos Funcionales Principales
+
+### 🧩 Sistema VivePass (FSM)
+Implementa dos máquinas de estados finitos:
+
+- **M1 – FSM Moore (lector de código)**  
+  Determina la longitud (`L`) del código/sticker leído (0–3 bits).  
+  Se reinicia con la señal de confirmación (`C`) proveniente de la Mealy.
+
+- **M2 – FSM Mealy (control de talanquera)**  
+  Recibe la longitud (`L`) y el estado del sensor de vehículo (`ST`).  
+  Si `L == 3` y `ST == 1`, activa la apertura (`A = 1`) y envía confirmación (`C = 1`) a la Moore.
 
 ---
 
-## 🔌 Basys3 (pines y polaridades)
-
-- **Reloj:** `clk` @ W5 (100 MHz)  
-- **7-segmentos (ánodo común, activos en bajo)**  
-  - `an[3:0]`: U2, U4, V4, W4  
-  - `seg[6:0]`: W7, W6, U8, V8, U5, V5, U7  
-  - `dp`: V7 (mantener en ‘1’ si no se usa)
-- **Botones:** `reset` = U18, `btnU` = T18  
-- **IOSTANDARD:** LVCMOS33  
-
-> El módulo `display_7segments` ya entrega señales activas en bajo para `an` y `seg`.
+### ⏱️ Reloj Digital (Clock 24 h)
+Genera y actualiza la hora local en formato **HH:MM**, mostrada en los **displays de 7 segmentos** de la Basys3.  
+Se implementa mediante **contadores síncronos** que simulan segundos, minutos y horas, con una base de tiempo ajustable según la frecuencia del reloj principal (100 MHz).
 
 ---
 
-## ⚙️ Funcionamiento
+## 💡 Multiplexación de Displays
 
-- **FSM Moore**
-  - `D && ~C` → incrementa `dread` (máx. 3) y avanza S0→S3.  
-  - `~D && C` → limpia el conteo y vuelve a S0.  
-  - `L` se asigna según el estado (00..11).
+El sistema utiliza los **cuatro displays integrados** de la Basys3 mediante **multiplexación temporal**, activando cada display por turnos cada ~1 ms.  
+Esto genera la ilusión de que todos están encendidos simultáneamente.
 
-- **FSM Mealy**
-  - `A = 1` solo si `ST = 1` y `L = 3`.  
-  - `C = 1` confirma lectura **válida** (`ST = 1` y `L = 3`).
+### Vistas disponibles:
+- **Vista VivePass (FSM):**
+  - Display 0 → Conteo de dígitos (`dread`)
+  - Displays restantes apagados.
 
-- **Reloj (hh:mm)**
-  - 60 s → +1 min; 60 min → +1 h; 24 h → 00:00.  
-  - Ajustar los contadores según la frecuencia real de `clk`.
+- **Vista Reloj (Clock):**
+  - Displays [3:2] → Horas (HH)
+  - Displays [1:0] → Minutos (MM)
 
-- **Display**
-  - `select = 0` → `d0 = dread`, `d1–d3 = 0` (modo VivePass)  
-  - `select = 1` → `d0 = min_u`, `d1 = min_d`, `d2 = hora_u`, `d3 = hora_d` (modo reloj)  
-  - Multiplexado ≈ 1 ms/dígito.
+El cambio de vista se realiza con el **botón U**, el cual pasa por módulos de **debounce** y **one_pulse** para evitar rebotes y señales duplicadas.
 
 ---
 
-## 🛠️ Compilación (Vivado)
+## 🔩 Arquitectura del Sistema
 
-1. Crear proyecto **Basys3 · Artix-7**.  
-2. Agregar fuentes desde `src/` y restricciones de `constraints/basys3.xdc`.  
-3. Verificar coincidencia de nombres (`clk`, `reset`, `an`, `seg`).  
-4. Usar un **solo reloj principal (`clk`)** para todas las FSM.  
-5. Sintetizar, implementar y programar.
+### Módulos Principales
+
+| Módulo | Descripción |
+|---------|--------------|
+| **FSM_Moore** | Determina la longitud del código (0–3). Controla la vista del sistema (FSM o reloj). |
+| **FSM_Mealy** | Controla la apertura/cierre de la barrera y confirma lecturas válidas. |
+| **clock** | Implementa el reloj 24 h con contadores de segundos, minutos y horas. |
+| **display_7segments** | Multiplexa los 4 displays, decodifica números BCD y maneja ánodos comunes activos en bajo. |
+| **clk_psc** | Divisor de reloj para tareas no críticas (ej. visualización lenta). |
+| **debouncer / one_pulse** | Limpian las señales de botones para evitar rebotes. |
+| **Top_basys3** | Módulo superior: integra todo, define la multiplexación entre vistas y mapea los puertos físicos. |
+
+---
+
+## ⚙️ Entradas y Salidas (Basys3)
+
+| Señal | Tipo | Descripción |
+|-------|------|--------------|
+| `clk` | Entrada | Reloj de 100 MHz de la Basys3 |
+| `reset` | Entrada | Reinicio global del sistema |
+| `btnU` | Entrada | Alterna entre vista FSM y reloj |
+| `D` | Entrada | Bit leído del sticker (0/1) |
+| `ST` | Entrada | Sensor del vehículo |
+| `A` | Salida | Control de talanquera (1 = abrir) |
+| `C` | Salida | Confirmación de lectura válida |
+| `an[3:0]` | Salida | Activación de displays (ánodo común, activos en bajo) |
+| `seg[6:0]` | Salida | Segmentos del display (activos en bajo) |
+| `dp` | Salida | Punto decimal (apagado) |
 
 ---
 
-## ⏱️ Timing
+## 🧭 Flujo del Sistema
 
-| Función   | Frecuencia | Ciclos @ 100 MHz |
-|------------|-------------|------------------|
-| Display (~1 ms) | 1 kHz | 100 000 |
-| Reloj (1 s)     | 1 Hz  | 100 000 000 |
-
-> Si usas `clk_psc.sv` como divisor, recalcula los umbrales según la nueva frecuencia.
+1. El vehículo llega y el sensor (`ST`) se activa.  
+2. El lector envía bits (`D`) a la **FSM Moore**, que cuenta la longitud.  
+3. La **FSM Mealy** valida si `L == 3` y abre la talanquera (`A = 1`).  
+4. La **Moore** recibe la confirmación (`C = 1`) y reinicia la lectura.  
+5. El usuario puede alternar entre **vista de sistema** y **reloj local** con `btnU`.
 
 ---
+
+## ⚙️ Multiplexación de los Displays
+
+- **1 ms por display** (~1 kHz de refresco).  
+- **Activos en bajo:** `an` y `seg`.  
+- **Controlados por contador de 17 bits** que alterna cada flanco positivo de `clk`.
+
+---
+
+## 🎥 Evidencias en Video
+
+### Ejercicio 1 – Implementación de FSM
+- FSM con reloj integrado:
+  👉 [https://youtu.be/OaL7UdaPSfI](https://youtu.be/OaL7UdaPSfI)  
+- Explicación del código:  
+  👉 [https://youtu.be/86AQyynaU6M](https://youtu.be/86AQyynaU6M)
+
+### Ejercicio 2 – Flujo de Vivado
+Demostración del flujo completo de diseño en Vivado:
+1. **RTL Schematic (Elaborated Design)** – Vista lógica antes de síntesis.  
+2. **Synthesis Design** – Traducción del RTL a celdas lógicas.  
+3. **Implementation Design** – Colocación y ruteo físico (LUTs, DRC, Slack).  
+4. **Bitstream / Hardware Manager** – Generación del `.bit` y programación en FPGA.
+
+📺 Explicación completa:  
+👉 [https://youtu.be/46htZkBVLcM](https://youtu.be/46htZkBVLcM)
+
+
 
 
