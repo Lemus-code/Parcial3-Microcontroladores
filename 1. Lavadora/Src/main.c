@@ -82,7 +82,7 @@ volatile uint8_t lcd_step = 0;
 volatile uint32_t tick_ms = 0;
 volatile uint8_t lcd_index = 0;
 volatile uint8_t fin_ciclo_tick = 0;
-const char *lcd_text = "Seleccione Ciclo";
+const char *lcd_text = "Select ciclo:123";
 
 // C. Variables internas del keypad (para debounce)
 volatile uint8_t ciclo = 0;        // ciclo activo
@@ -283,7 +283,7 @@ void lavado(void)
 	GPIOA->ODR &= ~(1<<12);
 	GPIOB->ODR &= ~(1<<10);
 
-    TIM2->CCR1 = 23;
+    TIM2->CCR1 = 40;
     GPIOC->ODR |=  (1 << 2);   // IN1 = 1
     GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → giro horario
     sentido = 0;               // sentido fijo
@@ -302,11 +302,11 @@ void enjuague(void)
     GPIOB->ODR &= ~(1 << 10);  // apaga centrifugado
 
     // ----- Velocidad base -----
-    if (pwm_actual < 28) pwm_actual++;  // pequeña rampa
+    if (pwm_actual < 35) pwm_actual++;  // pequeña rampa
     TIM2->CCR1 = pwm_actual;            // ~55% duty
 
     // ----- Cambio de sentido cada 200 ms -----
-    if ((tick_ms - last_toggle) >= 200)
+    if ((tick_ms - last_toggle) >= 500)
     {
         last_toggle = tick_ms;
         sentido_local ^= 1;
@@ -327,7 +327,7 @@ void centrifugado(void)
 	GPIOA->ODR &= ~(1<<15);
 	GPIOB->ODR |= (1<<10);
 
-    TIM2->CCR1 = 25;
+    TIM2->CCR1 = 70;
     GPIOC->ODR |=  (1 << 2);   // IN1 = 1
     GPIOC->ODR &= ~(1 << 3);   // IN2 = 0 → sentido horario
     sentido = 0;
@@ -803,7 +803,7 @@ void EXTI4_15_IRQHandler(void){
 		    	LCD_PrintNew("Sin ciclo activo");
 		        USART2_write_string("No hay ciclo activo para cancelar\r\n");
 		    } else {
-		    	LCD_PrintNew("Seleccione Ciclo");
+		    	LCD_PrintNew("Select ciclo:123");
 		        USART2_write_string("Ciclo CANCELADO\r\n");
 
 		        //Borramos ciclo y tiempo
@@ -847,6 +847,7 @@ void EXTI4_15_IRQHandler(void){
 	    }
 	    else {
 	    	USART2_write_string("Reanudando..");
+	        LCD_PrintNew("Reanudando");
 	        buzzer_ms = 100;
 
 	        // Solo reanudar si había un ciclo activo previamente
