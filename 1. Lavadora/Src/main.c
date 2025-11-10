@@ -14,10 +14,9 @@
 //        → D3 = decenas de segundo
 //        → D4 = unidades de segundo (derecha)
 
-// Keypad reducido (1 fila, 3 columnas):
+// Keypad reducido (2 filas, 4 columnas):
 //        Fila = PC4  → entrada con pull-up interno
-//        Columnas = PB7–PB9 → salidas controladas por ODR
-//        → C1 = 30 min, C2 = 40 min, C3 = 50 min
+//        Columnas = PB7–PB9, PA1 → salidas controladas por ODR
 
 // Motor del tambor (controlado por driver L298N):
 //        IN1 = PC2     → Dirección 1 (sentido horario)
@@ -62,6 +61,7 @@
 #define cc_7 0b0000111
 #define cc_8 0b1111111
 #define cc_9 0b1101111
+#define cc_10 0b1000000
 #define cc_all_off 0b0000000
 
 #define ca_cc_bits 0xFF //sirve más adelante para limpiar segmentos
@@ -87,6 +87,7 @@ const char *lcd_text = "Select ciclo:123";
 // C. Variables internas del keypad (para debounce)
 volatile uint8_t ciclo = 0;        // ciclo activo
 volatile uint8_t ciclo_prev = 0;
+volatile uint8_t modo_config = 0;
 
 //D. Display
 volatile uint8_t display_clk[4] = {0,0,0,0};
@@ -100,6 +101,10 @@ volatile uint16_t tiempo_total = 0; // tiempo total en segundos
 //F. Buzzer
 volatile uint16_t buzzer_ms = 0;
 
+//G. New Feauture programacion
+volatile uint8_t tiempo_espera = 0;
+volatile uint32_t tiempo_espera_total = 0;
+
 void system_init(){
 	//1. HSI 16Mhz
 	RCC->CR |= (1<<0); //Encenderlo
@@ -111,17 +116,21 @@ void system_init(){
 	//3. Configuración Puertos (Keypad, Displays, Lcd, Leds, Buzzer, Push, Switch, Motor)
 
 	// A. Keypad (1x3)
-	// Fila PC4 entrada con pull-up
-	GPIOC->MODER &= ~(3 << (4*2));
-	GPIOC->PUPDR &= ~(3 << (4*2));
-	GPIOC->PUPDR |=  (1 << (4*2)); // Pull-up activado
+	// Fila PC4,PC0 entrada con pull-up
+	GPIOC->MODER &= ~((3 << (4*2)) | (3 << (0*2)));
+	GPIOC->PUPDR &= ~((3 << (4*2)) | (3 << (0*2)));
+	GPIOC->PUPDR |=  ((1 << (4*2)) | (1 << (0*2))); // Pull-up activado
+
 
 	// Columnas PB7–PB9 salidas
 	GPIOB->MODER &= ~((3<<(7*2)) | (3<<(8*2)) | (3<<(9*2)));
 	GPIOB->MODER |=  ((1<<(7*2)) | (1<<(8*2)) | (1<<(9*2)));
+	GPIOA->MODER &= ~ (3<<(1*2));
+	GPIOA->MODER |=  (1<<(1*2));
 
 	// Inicializa columnas HIGH
 	GPIOB->ODR |= (1<<7) | (1<<8) | (1<<9);
+	GPIOA->ODR |= (1<<1);
 
 	//B. Display
 
@@ -416,51 +425,135 @@ void LCD_PrintNew(const char *texto) {
     lcd_state = 8;         // nuevo estado: limpiar antes de escribir
 }
 
+void LCD_PrintTwoLines(const char *line1, const char *line2)
+{
+    // Imprime primera línea con tu FSM
+    lcd_text = line1;
+    lcd_index = 0;
+    lcd_state = 8;   // limpia y escribe
+
+    // Espera unos ms para evitar que la FSM se pise
+    for (volatile int i = 0; i < 50000; i++) __NOP();
+
+    // Envía comando para mover cursor a segunda línea (dirección 0xC0)
+    LCD_SendByte(0xC0, 0);
+
+    // Escribe la segunda línea directamente (no interfiere con lcd_state)
+    for (uint8_t i = 0; line2[i] != '\0'; i++)
+        LCD_SendByte(line2[i], 1);
+}
+
+
 //<-------Funciones Keypad-------->
 void tecla_activa(void)
 {
     static uint8_t tecla_anterior = 0;
     static uint16_t contador_estable = 0;
+    static uint8_t tecla_reportada = 0;
+
+    // 🔹 Nuevas variables para repetición
+    static uint32_t tick_presion_inicio = 0;
+    static uint32_t tick_presion_ultima = 0;
+    const uint16_t RETARDO_REPETICION = 500;   // 500 ms antes de empezar a repetir
+    const uint16_t INTERVALO_REPETICION = 500; // 500 ms entre repeticiones
 
     uint8_t tecla_actual = 0;
 
-    // --- Escaneo rápido ---
+    // --- Escaneo físico del keypad ---
     GPIOB->ODR |= (1<<7)|(1<<8)|(1<<9);
+    GPIOA->ODR |= (1<<1);
 
+    // Columna 1 (PB7)
     GPIOB->ODR &= ~(1<<7);
     for (volatile int i = 0; i < 300; i++) __NOP();
     if (!(GPIOC->IDR & (1<<4))) tecla_actual = 1;
+    if (!(GPIOC->IDR & (1<<0))) tecla_actual = 4;
     GPIOB->ODR |= (1<<7);
 
+    // Columna 2 (PB8)
     GPIOB->ODR &= ~(1<<8);
     for (volatile int i = 0; i < 300; i++) __NOP();
     if (!(GPIOC->IDR & (1<<4))) tecla_actual = 2;
+    if (!(GPIOC->IDR & (1<<0))) tecla_actual = 5;
     GPIOB->ODR |= (1<<8);
 
+    // Columna 3 (PB9)
     GPIOB->ODR &= ~(1<<9);
     for (volatile int i = 0; i < 300; i++) __NOP();
     if (!(GPIOC->IDR & (1<<4))) tecla_actual = 3;
+    if (!(GPIOC->IDR & (1<<0))) tecla_actual = 6;
     GPIOB->ODR |= (1<<9);
 
-    // --- Lógica de debounce ---
+    // Columna 4 (PA1)
+    GPIOA->ODR &= ~(1<<1);
+    for (volatile int i = 0; i < 300; i++) __NOP();
+    if (!(GPIOC->IDR & (1<<4))) tecla_actual = 10; // A
+    if (!(GPIOC->IDR & (1<<0))) tecla_actual = 11; // B
+    GPIOA->ODR |= (1<<1);
+
+    // --- Detección estable y lógica de repetición ---
     if (tecla_actual == tecla_anterior && tecla_actual != 0)
     {
         contador_estable++;
-        if (contador_estable >= 3)   // 3 lecturas estables de 20 ms = 60 ms
-        {
-            if (tecla_actual != ciclo)  // si es nueva tecla
-                ciclo = tecla_actual;
 
-            contador_estable = 0; // reinicia para evitar múltiples lecturas
+        if (contador_estable >= 3)
+        {
+        	if (!tecla_reportada)
+        	{
+        	    tecla_reportada = 1;
+        	    tick_presion_inicio = tick_ms;
+        	    tick_presion_ultima = tick_ms;
+
+        	    if (modo_config == 0)
+        	    {
+        	        // --- Modo normal: selección de ciclo ---
+        	        if ((tecla_actual >= 1 && tecla_actual <= 3))
+        	            ciclo = tecla_actual;
+        	        else if (tecla_actual == 10 && ciclo != 0)
+        	            modo_config = 1; // entra a config
+        	        else if (tecla_actual == 10 && ciclo == 0)
+        	            LCD_PrintNew("Sin ciclo");
+        	    }
+        	    else if (modo_config == 1)
+        	    {
+
+        	        if ((tecla_actual >= 1 && tecla_actual <= 11))
+        	            tiempo_espera = tecla_actual;
+        	    }
+        	}
+        	else
+        	{
+        	    // --- Repetición mientras se mantiene presionado ---
+        	    if (modo_config == 1 &&
+        	        (tecla_actual >= 1 && tecla_actual <= 6) &&
+        	        (tick_ms - tick_presion_inicio > RETARDO_REPETICION) &&
+        	        (tick_ms - tick_presion_ultima >= INTERVALO_REPETICION))
+        	    {
+        	        tiempo_espera = tecla_actual;   // nuevo evento
+        	        tick_presion_ultima = tick_ms;  // actualizar marca
+        	    }
+        	}
+
+            contador_estable = 3; // mantener estable
         }
     }
     else
     {
         contador_estable = 0;
+
+        // 🔹 Cuando se suelta la tecla, liberar todo
+        if (tecla_actual == 0)
+        {
+            tecla_reportada = 0;
+            tick_presion_inicio = 0;
+            tick_presion_ultima = 0;
+        }
     }
 
     tecla_anterior = tecla_actual;
 }
+
+
 
 //<-----Funciones Display----->
 uint8_t parser(uint8_t decode){
@@ -475,6 +568,7 @@ uint8_t parser(uint8_t decode){
         case 7: return cc_7;
         case 8: return cc_8;
         case 9: return cc_9;
+        case 10: return cc_10;
         default: return cc_all_off;
     }
 }
@@ -542,6 +636,23 @@ void print_display(void)
 }
 
 //<------Funciones conteo regresivo------->
+void actualizar_display_desde_minutos(void)
+{
+	// 🔹 Límite máximo: 24 horas (24 * 3600 = 86400 s)
+	if (tiempo_espera_total > 86400)
+	    tiempo_espera_total = 86400;
+
+	// 🔹 Conversión a horas:minutos
+	uint8_t horas_espera = tiempo_espera_total / 3600;
+	uint8_t minutos_espera = (tiempo_espera_total % 3600) / 60;
+
+	// 🔹 Actualiza display
+	display_clk[0] = horas_espera / 10;     // decenas de hora
+	display_clk[1] = horas_espera % 10;     // unidades de hora
+	display_clk[2] = minutos_espera / 10;   // decenas de minuto
+	display_clk[3] = minutos_espera % 10;   // unidades de minuto
+}
+
 void actualizar_display_desde_segundos(void)
 {
     uint8_t minutos = tiempo_total / 60;
@@ -577,6 +688,27 @@ void clk_inverso(void)
     }
 }
 
+void clk_inverso_espera(void)
+{
+    static uint16_t contador_seg = 0;
+
+    if (tiempo_espera_total > 0)
+    {
+        contador_seg++;
+
+        if (contador_seg >= 60)
+        {
+            contador_seg = 0;
+            tiempo_espera_total -= 60;
+            USART2_write_string("Esperando...\r\n");
+        }
+
+        actualizar_display_desde_minutos();
+    }
+}
+
+
+
 //<-----Funciones USART2----->
 void USART2_write_char(char ch) {
     while (!(USART2->ISR & (1 << 7))); // Esperar TXE
@@ -606,9 +738,86 @@ void USART2_write_uint(uint32_t num) {
 }
 
 //<------Funciones Logica Lavadora------->
-void selec_ciclo(){
 
-	if(ciclo != ciclo_prev && ciclo_activo != 1){
+void mod_config(void)
+{
+    static uint8_t espera_prev = 0;
+
+    // Solo entra si cambió el valor de tiempo_espera
+    if (tiempo_espera != espera_prev)
+    {
+        espera_prev = tiempo_espera;  // Actualiza el valor previo
+
+        switch (tiempo_espera)
+        {
+            case 1:
+                tiempo_espera_total += 60;   // +1 min
+                LCD_PrintNew("+1 min espera");
+                USART2_write_string("Tiempo de espera: +1 min\r\n");
+                break;
+
+            case 2:
+                tiempo_espera_total += 300;  // +5 min
+                LCD_PrintNew("+5 mins espera");
+                USART2_write_string("Tiempo de espera: +5 mins\r\n");
+                break;
+
+            case 3:
+                tiempo_espera_total += 600;  // +10 min
+                LCD_PrintNew("+10 mins espera");
+                USART2_write_string("Tiempo de espera: +10 mins\r\n");
+                break;
+
+            case 4:
+                tiempo_espera_total += 900;  // +15 min
+                LCD_PrintNew("+15 mins espera");
+                USART2_write_string("Tiempo de espera: +15 mins\r\n");
+                break;
+
+            case 5:
+                tiempo_espera_total += 1800; // +30 min
+                LCD_PrintNew("+30 mins espera");
+                USART2_write_string("Tiempo de espera: +30 mins\r\n");
+                break;
+
+            case 6:
+                tiempo_espera_total += 3600; // +1 hora
+                LCD_PrintNew("+1 hora espera");
+                USART2_write_string("Tiempo de espera: +1 hora\r\n");
+                break;
+            case 10:
+            	LCD_PrintNew("Config guardada");
+            	USART2_write_string("Config Guardada");
+            	modo_config = 0;
+            	tiempo_espera = 0;
+            	ciclo_prev = 0;   // 🔹 Fuerza refresco en selec_ciclo()
+            	break;
+            case 11:
+            	USART2_write_string("Config cancelada");
+            	for (volatile uint32_t i = 0; i < 80000; i++) __NOP();  // mismo delay visual
+            	modo_config = 0;
+            	tiempo_espera_total = 0;
+            	ciclo_prev = 0;
+            	break;
+
+            default:
+                break;
+        }
+
+        actualizar_display_desde_minutos();
+
+        // 🔹 Limpia para evitar rebotes
+        tiempo_espera = 0;
+    }
+}
+
+
+
+void selec_ciclo(void)
+{
+    static uint8_t config_impreso = 0;
+
+	if(ciclo != ciclo_prev && ciclo_activo != 1 && modo_config == 0){
 		ciclo_prev = ciclo;
 
 		switch(ciclo){
@@ -622,38 +831,74 @@ void selec_ciclo(){
 		        display_clk[2] = 0; // decenas de segundo
 		        display_clk[3] = 0; // unidades de segundo
 
-
 		        break;
+
 		    case 2:
 		        LCD_PrintNew("Ciclo Normal 6M");
 		        USART2_write_string("Ciclo Normal 6M seleccionado\r\n");
 		        tiempo_total = 360; // 6 minutos
+
 		        display_clk[0] = 0;  // decenas de minuto
 		        display_clk[1] = 6;  // unidades de minuto
 		        display_clk[2] = 0; // decenas de segundo
 		        display_clk[3] = 0; // unidades de segundo
 		        break;
+
 		    case 3:
 		        LCD_PrintNew("Ciclo Pesado 9M");
 		        USART2_write_string("Ciclo Pesado 9M seleccionado\r\n");
 		        tiempo_total = 540; // 9 minutos
+
 		        display_clk[0] = 0;  // decenas de minuto
 		        display_clk[1] = 9;  // unidades de minuto
 		        display_clk[2] = 0; // decenas de segundo
 		        display_clk[3] = 0; // unidades de segundo
 		        break;
+		    default:
+		    	 display_clk[0] = 0;  // decenas de minuto
+		    	 display_clk[1] = 0;  // unidades de minuto
+		    	 display_clk[2] = 0; // decenas de segundo
+		    	 display_clk[3] = 0; // unidades de segundo
+		    	 LCD_PrintNew("Seleccione ciclo");
 		}
 
 	}
 
+    // --- modo configuración ---
+    if (modo_config == 1)
+    {
+    	if(config_impreso == 0){
+    	    LCD_PrintNew("Config:A(G) B(C)");
+    	    USART2_write_string("Modo config\r\n");
+    	}
+
+
+    	if(config_impreso == 0 && tiempo_espera_total == 0){
+            display_clk[0] = 10;
+            display_clk[1] = 10;
+            display_clk[2] = 10;
+            display_clk[3] = 10;
+    	}else if(config_impreso == 0){
+    		actualizar_display_desde_minutos();
+    	}
+
+        config_impreso = 1;
+        mod_config();
+    }
+    else if (modo_config == 0)
+    {
+        config_impreso = 0; // reset para permitir mostrar otra vez
+    }
 }
+
+
+
 
 void control_etapa(){
 	switch(etapa){
 	case 1:
 		lavado();
 		break;
-
 	case 2:
 		enjuague();
 		break;
@@ -722,86 +967,125 @@ void TIM22_IRQHandler(void)
 
         if (ciclo_activo)
         {
-            clk_inverso();        // Actualiza el display regresivo
-            segundos_etapa++;     // Contador interno por etapa
-            control_etapa();      // Ejecuta comportamiento según etapa
+        	if(tiempo_espera_total > 0){
+        		clk_inverso_espera();
+        	}else{
+        		clk_inverso();
+                segundos_etapa++;     // Contador interno por etapa
+                if(etapa == 0){
+                	  etapa = 1;
+                }
 
-            // 🔹 Duración por etapa según el ciclo
-            uint16_t etapa_duracion = 0;
-            switch (ciclo)
-            {
-                case 1: etapa_duracion = 60;  break;  // 1 min
-                case 2: etapa_duracion = 120; break;  // 2 min
-                case 3: etapa_duracion = 180; break;  // 3 min
-                default: etapa_duracion = 60; break;  // seguridad
-            }
+                control_etapa();      // Ejecuta comportamiento según etapa
 
-            // 🔸 CAMBIO AUTOMÁTICO DE ETAPAS
-            if (etapa == 1 && segundos_etapa >= etapa_duracion) {
-                etapa = 2;
-                segundos_etapa = 0;
-                USART2_write_string("Cambio -> Enjuague\r\n");
-        	    LCD_PrintNew("Enjuague");
-        	    USART2_write_string("Etapa Enjuague\r\n");
-            }
-            else if (etapa == 2 && segundos_etapa >= etapa_duracion) {
-                etapa = 3;
-                segundos_etapa = 0;
-                USART2_write_string("Cambio -> Centrifugado\r\n");
-        	    LCD_PrintNew("Centrifugado");
-        	    USART2_write_string("Etapa: Centrifugado\r\n");
-            }
-            else if (etapa == 3 && tiempo_total == 0) {
-                segundos_etapa = 0;
-                etapa = 0;
-                ciclo_activo = 0;
-                ciclo = 0;
+                // 🔹 Duración por etapa según el ciclo
+                uint16_t etapa_duracion = 0;
+                switch (ciclo)
+                {
+                    case 1: etapa_duracion = 60;  break;  // 1 min
+                    case 2: etapa_duracion = 120; break;  // 2 min
+                    case 3: etapa_duracion = 180; break;  // 3 min
+                    default: etapa_duracion = 60; break;  // seguridad
+                }
 
-                LCD_PrintNew("Ciclo Finalizado");
-                USART2_write_string("Ciclo completo!\r\n");
+                // 🔸 CAMBIO AUTOMÁTICO DE ETAPAS
+                if (etapa == 1 && segundos_etapa >= etapa_duracion) {
+                    etapa = 2;
+                    segundos_etapa = 0;
+                    USART2_write_string("Cambio -> Enjuague\r\n");
+            	    LCD_PrintNew("Enjuague");
+            	    USART2_write_string("Etapa Enjuague\r\n");
+                }
+                else if (etapa == 2 && segundos_etapa >= etapa_duracion) {
+                    etapa = 3;
+                    segundos_etapa = 0;
+                    USART2_write_string("Cambio -> Centrifugado\r\n");
+            	    LCD_PrintNew("Centrifugado");
+            	    USART2_write_string("Etapa: Centrifugado\r\n");
+                }
+                else if (etapa == 3 && tiempo_total == 0) {
+                    segundos_etapa = 0;
+                    etapa = 0;
+                    ciclo_activo = 0;
+                    ciclo = 0;
 
-                //Motor desactivado
-                GPIOC->ODR &= ~((1 << 2) | (1 << 3));
+                    LCD_PrintNew("Ciclo Finalizado");
+                    USART2_write_string("Ciclo completo!\r\n");
 
-                //Leds apagadas
-                GPIOA->ODR &= ~((1 << 12) | (1 << 15));
-                GPIOB->ODR &= ~(1 << 10);
+                    //Motor desactivado
+                    GPIOC->ODR &= ~((1 << 2) | (1 << 3));
 
-                // 🔊 Buzzer no bloqueante: 1 segundo
-                buzzer_ms = 1000;
+                    //Leds apagadas
+                    GPIOA->ODR &= ~((1 << 12) | (1 << 15));
+                    GPIOB->ODR &= ~(1 << 10);
 
-                fin_ciclo_tick = tick_ms + 2000;
-            }
+                    // 🔊 Buzzer no bloqueante: 1 segundo
+                    buzzer_ms = 1000;
+
+                    fin_ciclo_tick = tick_ms + 2000;
+                }
+        	}
         }
     }
 }
 
 void EXTI0_1_IRQHandler(void)
 {
-	if (EXTI->PR & (1 << 1)) {
-	    EXTI->PR = (1 << 1);
+    if (EXTI->PR & (1 << 1))  // Interrupción en PC1 (START)
+    {
+        EXTI->PR = (1 << 1);  // limpiar flag
 
-	    if (ciclo != 0) {
-	        USART2_write_string("Boton START presionado\r\n");
-		    LCD_PrintNew("Lavado");
-		    USART2_write_string("Etapa Lavado\r\n");
-	        ciclo_activo = 1;\
-	        etapa = 1;
-	    } else {
-	        USART2_write_string("No hay ciclo seleccionado\r\n");
-	        LCD_PrintNew("No ciclo, elija");
-	        ciclo_activo = 0;
-	    }
-	}
+        // 🔸 Si estamos en modo configuración, bloquear el inicio
+        if (modo_config == 1)
+        {
+            USART2_write_string("No puede iniciar: modo config activo\r\n");
+            LCD_PrintNew("Guarde config (A)");
+            buzzer_ms = 150;   // beep corto
+            return;            // ❌ No permite continuar
+        }
+
+        // 🔸 Si no hay ciclo seleccionado
+        if (ciclo == 0)
+        {
+            USART2_write_string("No hay ciclo seleccionado\r\n");
+            LCD_PrintNew("No ciclo, elija");
+            ciclo_activo = 0;
+            return;
+        }
+
+        // 🔸 Si hay ciclo, verificar si hay tiempo de espera
+        USART2_write_string("Boton START presionado\r\n");
+
+        if (tiempo_espera_total > 0)
+        {
+            // 🔹 Modo de espera antes de iniciar el ciclo
+            LCD_PrintNew("Esperando inicio...");
+            USART2_write_string("Modo espera activo\r\n");
+
+            ciclo_activo = 1;  // activa conteo de espera
+            etapa = 0;         // sin etapa activa todavía
+        }
+        else
+        {
+            // 🔹 Inicia ciclo directamente
+            LCD_PrintNew("Lavado");
+            USART2_write_string("Etapa Lavado\r\n");
+
+            ciclo_activo = 1;
+            etapa = 1;
+            modo_config = 0;
+        }
+    }
 }
+
 
 void EXTI4_15_IRQHandler(void){
 	if (EXTI->PR & (1 << 11)) {
 		    EXTI->PR = (1 << 11);
 
 		    if (ciclo == 0) {
-		    	LCD_PrintNew("Sin ciclo activo");
-		        USART2_write_string("No hay ciclo activo para cancelar\r\n");
+		    	LCD_PrintNew("Sin ciclo");
+		        USART2_write_string("No hay ciclo o config para cancelar\r\n");
 		    } else {
 		    	LCD_PrintNew("Select ciclo:123");
 		        USART2_write_string("Ciclo CANCELADO\r\n");
@@ -810,7 +1094,9 @@ void EXTI4_15_IRQHandler(void){
 		        ciclo_activo = 0;
 		        ciclo = 0;
 		        tiempo_total = 0;
+		        tiempo_espera_total = 0;
 		        segundos_etapa = 0;
+		        modo_config = 0;
 
 		        //Apagamos motor
 		        GPIOC->ODR &=  ~(1 << 2);   // IN1 = 0
@@ -829,33 +1115,55 @@ void EXTI4_15_IRQHandler(void){
 	if (EXTI->PR & (1 << 12)) {
 	    EXTI->PR = (1 << 12); // limpiar flag
 
-	    // Leemos estado actual de la tapa
 	    uint8_t tapa_cerrada = (GPIOB->IDR & (1 << 12)) ? 1 : 0;
 
 	    if (!tapa_cerrada) {
-	        USART2_write_string("Cierre tapa \r\n");
+	        // 🔸 Caso: tapa abierta
+	        USART2_write_string("Tapa abierta\r\n");
 	        LCD_PrintNew("Tapa abierta!");
-	        ciclo_activo = 0;
-
-	        // Apagar motor y LEDs
-	        GPIOC->ODR &= ~((1 << 2) | (1 << 3));
-	        GPIOA->ODR &= ~((1 << 12) | (1 << 15));
-	        GPIOB->ODR &= ~(1 << 10);
-
-	        // Aviso sonoro corto
 	        buzzer_ms = 300;
+
+	        if (etapa != 0 && ciclo_activo == 1) {
+	            ciclo_activo = 0;
+	            GPIOC->ODR &= ~((1 << 2) | (1 << 3));
+	            GPIOA->ODR &= ~((1 << 12) | (1 << 15));
+	            GPIOB->ODR &= ~(1 << 10);
+	        }
 	    }
 	    else {
-	    	USART2_write_string("Reanudando..");
-	        LCD_PrintNew("Reanudando");
-	        buzzer_ms = 100;
+	        // 🔸 Caso: tapa cerrada
+	        USART2_write_string("Tapa cerrada\r\n");
 
-	        // Solo reanudar si había un ciclo activo previamente
-	        if (tiempo_total > 0 && ciclo != 0 && etapa != 0) {
+	        // ✅ Caso normal: reanudar ciclo activo en pausa
+	        if (etapa != 0 && tiempo_total > 0 && ciclo != 0) {
 	            ciclo_activo = 1;
+	            LCD_PrintNew("Reanudando...");
+	            buzzer_ms = 100;
+	        }
+
+	        // ✅ Caso especial: fin de espera, tapa estaba abierta
+	        if (ciclo_activo == 2 && etapa == 0 && ciclo != 0)  // <---- 👈 AQUÍ entra tu nuevo bloque
+	        {
+	            USART2_write_string("Tapa cerrada tras espera. Iniciando ciclo...\r\n");
+	            LCD_PrintNew("Lavado");
+	            buzzer_ms = 150;
+
+	            ciclo_activo = 1;    // volver a modo ciclo normal
+	            etapa = 1;           // arranca FSM
+	            segundos_etapa = 0;
+
+	            actualizar_display_desde_segundos();
+	        }
+
+	        // ✅ Caso: tapa cerrada pero aún en espera de inicio
+	        else if (tiempo_espera_total > 0 && etapa == 0)
+	        {
+	            LCD_PrintNew("Esperando inicio...");
+	            USART2_write_string("Tapa cerrada (espera)\r\n");
 	        }
 	    }
 	}
+
 
 }
 
