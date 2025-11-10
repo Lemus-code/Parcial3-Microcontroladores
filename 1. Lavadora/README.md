@@ -174,5 +174,10 @@ Interfaz de diagnóstico a 115 200 bps.
 
 ---
 
+### 🎥 Vídeos del proyecto
+
+- [Funcionamiento Lavadora – YouTube](https://youtu.be/OtKVw8Qm458)  
+- [Explicación Código Lavadora, Núcleo-L053R8 – YouTube](https://youtu.be/HCbIdR3-43Y)
+
 
 
