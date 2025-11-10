@@ -1,3 +1,91 @@
+# Serie 3 – Sistema de Lavadora Inteligente con Control por FSM y Multiplexación de Interfaces (STM32L053R8)
+
+---
+
+## 🧠 Descripción General
+
+Este proyecto implementa una **lavadora automática embebida** basada en una **máquina de estados finitos (FSM)**, ejecutada completamente en **hardware real (STM32 Nucleo-L053R8)**.  
+
+El sistema coordina el funcionamiento del **motor**, **display**, **teclado**, **LCD**, **buzzer** y **sensores**, integrando control de etapas, cuenta regresiva, multiplexación de displays y seguridad por tapa bajo una arquitectura modular programada en **C bare-metal**.
+
+---
+
+## ⚙️ Módulos Funcionales Principales
+
+### 🧩 1. FSM de Control del Ciclo de Lavado
+Define la secuencia **Lavado → Enjuague → Centrifugado**, gestionando tiempos, direcciones del motor y alertas visuales.
+
+| Ciclo | Duración | Descripción |
+|--------|-----------|-------------|
+| Rápido | 3 min | Lavado ligero con menos tiempo de rotación |
+| Normal | 6 min | Lavado estándar con alternancia de sentidos |
+| Pesado | 9 min | Mayor duración y fuerza de centrifugado |
+
+---
+
+### ⚙️ 2. Control del Motor (Driver L298N)
+El motor del tambor es controlado mediante **PWM (TIM2_CH1 – PA0)** para variar la velocidad, y **líneas IN1/IN2 (PC2–PC3)** para definir el sentido de giro.
+
+- **Lavado:** sentido horario constante.  
+- **Enjuague:** alternancia CW/CCW cada 500 ms con rampa de duty.  
+- **Centrifugado:** duty alto (≈70 %) con sentido fijo horario.
+
+---
+
+### 🔢 3. Display de 7 Segmentos Multiplexado
+Los cuatro dígitos son controlados por multiplexación temporal (~1 ms por dígito).  
+Refrescados por **TIM21**, muestran la cuenta regresiva o el tiempo de espera.
+
+| Dígito | Información |
+|---------|--------------|
+| D1 | Decenas de minuto |
+| D2 | Unidades de minuto |
+| D3 | Decenas de segundo |
+| D4 | Unidades de segundo |
+
+---
+
+### 🧭 4. LCD 16×2 (Interfaz Usuario)
+Controlado en modo 4 bits (PA4–PA11) con su propia FSM.  
+Mensajes dinámicos:
+
+- `Select ciclo:123`  
+- `Ciclo Pesado 9M seleccionado`  
+- `Esperando inicio...`  
+- `Tapa abierta!`  
+- `Ciclo Finalizado`
+
+---
+
+### ⌨️ 5. Keypad (Selección y Configuración)
+Matriz 2×4 escaneada por software cada 20 ms:
+- **1–3:** seleccionan ciclo.  
+- **A:** guarda configuración.  
+- **B:** cancela.  
+
+En **modo configuración**, permite sumar tiempo de espera (+1 min, +5 min, +10 min, +30 min, +1 h).
+
+Incluye lógica de **debounce** y **auto-repetición**.
+
+---
+
+### 🔔 6. Buzzer y LEDs
+- **PA6 (PWM):** buzzer para avisos.  
+- **PA12, PA15, PB10:** LEDs de etapa  
+  - Lavado / Enjuague / Centrifugado.
+
+---
+
+### 🚨 7. Seguridad por Tapa
+Switch en **PB12 (EXTI12)**:
+- **Abierta:** pausa ciclo, apaga motor y activa buzzer.  
+- **Cerrada:** reanuda o inicia según estado.  
+Compatible con modo “espera programada”.
+
+---
+
+### 💬 8. Comunicación Serial (USART2)
+Interfaz de diagnóstico a 115 200 bps.
 
 ---
 
@@ -85,5 +173,6 @@
 6. Monitoreo vía serial a 115 200 bps.
 
 ---
+
 
 
