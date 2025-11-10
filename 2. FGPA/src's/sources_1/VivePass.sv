@@ -1,88 +1,44 @@
-`timescale 100ns / 1ps
+// LCD 16x2 (modo 4 bits):
+//        D4–D7 = PA8–PA11	
+//        E  = PA5
+//        RS = PA4
 
-module VivePass(
-    input  logic clk,
-    input  logic reset,
-    input  logic [1:0] sw, 
-    input  logic btnU, //change to clk
-    output logic led,
-    output logic [3:0] an,
-    output logic [6:0] seg,
-    output logic dp
-);
+// Display 7 segmentos (4 dígitos, multiplexado):
+//        Segmentos a–g = PB0–PB6
+//        Enable dígitos D1–D4 = PC5, PC6, PC8, PC9
+//        → D1 = decenas de minuto (izquierda)
+//        → D2 = unidades de minuto
+//        → D3 = decenas de segundo
+//        → D4 = unidades de segundo (derecha)
 
-//Plantilla de L
-typedef enum logic [1:0] {Digits_0, Digit_1, Digits_2, Digits_3} outtype;
-outtype l;
+// Keypad reducido (1 fila, 3 columnas):
+//        Fila = PC2  → entrada con pull-up interno
+//        Columnas = PB7–PB9 → salidas controladas por ODR
+//        → C1 = 30 min, C2 = 40 min, C3 = 50 min
 
-typedef enum logic {Abrir, Cerrar} outtypet;
-outtypet A_t;
+// Motor del tambor (controlado por driver L298N):
+//        IN1 = PC3     → Dirección 1 (sentido horario)
+//        IN2 = PC4     → Dirección 2 (sentido antihorario)
+//        ENA (PWM velocidad) = PA6 (TIM3_CH1)
+//        → Control de velocidad mediante PWM (Timer 3 Canal 1)
+//        → Inversión de rotación controlada por software usando IN1/IN2
 
-//Señales internas
-logic [1:0] L_out;
-logic c_out;
-logic clk2;
-logic select = 1'b0;
-logic btnU_d;
+// Buzzer (alertas de inicio, fin, error):
+//        PWM salida = PA6 (TIM2_CH1)
+//        → Generación de tonos con Timer 2 Canal 1
 
-always_ff @(posedge clk or posedge reset) begin
-    if (reset)
-        select <= 1'b0;
-    else begin
-        // Detectar flanco de subida
-        if (btnU && !btnU_d)
-            select <= ~select;
-        btnU_d <= btnU;  // Guardar el valor actual para comparar después
-    end
-end
+// LEDs indicadores de etapa del ciclo:
+//        Lavado     = PA12
+//        Enjuague   = PA15
+//        Centrifuga = PB10
 
-    
-//Instancia Clock
-clk_psc clk_scl (
-        .clk(clk),
-        .clk_scaled(clk2));
+// Botones de control (interrupciones EXTI):
+//        Iniciar  = PC1  (EXTI1)  → Botón START del ciclo
+//        Cancelar = PB11 (EXTI11) → Cancela ciclo actual
 
-// Instancia Moore
-FSM_Moore moore (
-    .clk(clk),
-    .clk2(clk2), 
-    .select(select),
-    .reset(reset), 
-    .D(sw[0]), 
-    .C(c_out),     
-    .L(L_out),
-    .enabled(an),
-    .ag(seg)      
-);
+// Switch de tapa de seguridad:
+//        Tapa = PB12 (EXTI12) → Bloquea arranque si está abierta
 
-// Instancia Mealy
-FSM_Mealy mealy (
-    .clk(clk2), 
-    .reset(reset), 
-    .ST(sw[1]), 
-    .L(L_out), 
-    .A(led), 
-    .C(c_out)      
-);
-
-    always_comb begin
-        case(L_out)
-            2'b00: l = Digits_0;
-            2'b01: l = Digit_1;
-            2'b10: l = Digits_2;
-            2'b11: l = Digits_3;
-            default: l = Digits_0;
-        endcase
-    end
-    
-     always_comb begin
-        case(led)
-            2'b0: A_t = Cerrar;
-            2'b1: A_t = Abrir;
-            default: A_t = Cerrar;
-        endcase
-    end
-    
-    assign dp = 1'b1; //apago el dot
-
-endmodule
+// USART2 (para monitoreo serial o módulo LTE/GSM):
+//        TX = PA2  (USART2_TX)
+//        RX = PA3  (USART2_RX)
